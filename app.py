@@ -18,6 +18,8 @@ EXPIRE_AGE = 10800            # 3 hours
 
 CHANNELS = {
     "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
+    "techysporty": "https://youtube.com/@techysporty?si=cVB5OtX_mRJKCnzG",
+"comedy": "https://youtube.com/@malayalamcomedyscene5334?si=NsTvGvpqS1HWl3Lj",
 }
 
 VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
