@@ -17,10 +17,7 @@ CLEANUP_INTERVAL = 1800
 EXPIRE_AGE = 10800
 
 CHANNELS = {
-    "qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
-    "sharique": "https://www.youtube.com/@shariquesamsudheen/videos",
-    "drali": "https://www.youtube.com/@draligomaa/videos",
-    "yaqeen": "https://www.youtube.com/@yaqeeninstituteofficial/videos"
+    "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
 }
 
 VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
