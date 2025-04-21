@@ -11,15 +11,16 @@ import random
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-REFRESH_INTERVAL = 900        # 15 mins
-RECHECK_INTERVAL = 1800       # 30 mins
-CLEANUP_INTERVAL = 1800       # 30 mins
+REFRESH_INTERVAL = 900        # 15 minutes
+RECHECK_INTERVAL = 1800       # 30 minutes
+CLEANUP_INTERVAL = 1800       # 30 minutes
 EXPIRE_AGE = 10800            # 3 hours
 
 CHANNELS = {
     "qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
     "sharique": "https://www.youtube.com/@shariquesamsudheen/videos",
-    # ... (add others as needed)
+    "drali": "https://www.youtube.com/@draligomaa/videos",
+    "yaqeen": "https://www.youtube.com/@yaqeeninstituteofficial/videos"
 }
 
 VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
@@ -76,25 +77,26 @@ def fetch_latest_video_url(channel_url):
         return None
 
 def download_and_convert(channel, video_url):
-    output_path = TMP_DIR / f"{channel}.mp4"
-    if output_path.exists():
-        return output_path
+    final_path = TMP_DIR / f"{channel}.mp4"
+    if final_path.exists():
+        return final_path
 
     if not video_url:
-        logging.warning(f"Skipping download for {channel} due to missing URL")
+        logging.warning(f"Skipping download for {channel} because video URL is not available.")
         return None
 
     try:
         subprocess.run([
             "yt-dlp",
-            "-f", "best[ext=mp4]/best",
-            "-o", str(TMP_DIR / f"{channel}.%(ext)s"),
+            "-f", "best[ext=mp4]",
+            "--output", str(TMP_DIR / f"{channel}.%(ext)s"),
             "--cookies", "/mnt/data/cookies.txt",
-            "--postprocessor-args", f"-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ac 1 -ar 22050",
             "--recode-video", "mp4",
+            "--postprocessor-args", "ffmpeg:-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ac 1 -ar 22050",
             video_url
         ], check=True)
-        return output_path if output_path.exists() else None
+
+        return final_path if final_path.exists() else None
     except Exception as e:
         logging.error(f"Error converting {channel}: {e}")
         return None
@@ -124,7 +126,8 @@ def stream_mp4(channel):
 
     if range_header:
         try:
-            byte1, byte2 = range_header.strip().split("=")[1].split("-")
+            range_value = range_header.strip().split("=")[1]
+            byte1, byte2 = range_value.split("-")
             byte1 = int(byte1)
             byte2 = int(byte2) if byte2 else file_size - 1
         except Exception as e:
@@ -139,6 +142,7 @@ def stream_mp4(channel):
             'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
             'Content-Length': str(length)
         })
+
         return Response(chunk, status=206, headers=headers)
 
     with open(mp4_path, 'rb') as f:
@@ -150,7 +154,7 @@ def stream_mp4(channel):
 def index():
     files = list(TMP_DIR.glob("*.mp4"))
     links = [f'<li><a href="/{f.stem}.mp4">{f.stem}.mp4</a> (created: {time.ctime(f.stat().st_mtime)})</li>' for f in files]
-    return f"<h3>Available Video Streams</h3><ul>{''.join(links)}</ul>"
+    return f"<h3>Available Streams</h3><ul>{''.join(links)}</ul>"
 
 # Start background threads
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
