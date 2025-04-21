@@ -174,7 +174,11 @@ def index():
         avatar = VIDEO_CACHE[channel].get("avatar", "")
         if not avatar:
             avatar = "https://via.placeholder.com/30?text=YT"
-        avatar_img = f'<img src="{avatar}" loading="lazy" style="height:30px; vertical-align:middle; margin-right:10px;">' if avatar else ""
+        
+        # Embed the thumbnail image in the list
+        avatar_img = f'<img src="{avatar}" loading="lazy" style="height:30px; vertical-align:middle; margin-right:10px;">'
+        
+        # Build the HTML list item
         html += f'<li style="margin-bottom:10px;">{avatar_img}<a href="/{channel}.mp4">{channel}</a> <small>({time.ctime(mp4_path.stat().st_mtime)})</small></li>'
     html += "</ul>"
     return html
