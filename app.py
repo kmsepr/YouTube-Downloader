@@ -11,10 +11,10 @@ import random
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-REFRESH_INTERVAL = 900
-RECHECK_INTERVAL = 1800
-CLEANUP_INTERVAL = 1800
-EXPIRE_AGE = 10800
+REFRESH_INTERVAL = 900        # 15 minutes
+RECHECK_INTERVAL = 1800       # 30 minutes
+CLEANUP_INTERVAL = 1800       # 30 minutes
+EXPIRE_AGE = 10800            # 3 hours
 
 CHANNELS = {
     "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
@@ -47,14 +47,13 @@ def update_video_cache_loop():
             time.sleep(random.randint(5, 10))
         time.sleep(REFRESH_INTERVAL)
 
-def auto_download_3gps():
+def auto_download_loop():
     while True:
         for name, data in VIDEO_CACHE.items():
             video_url = data.get("url")
             if video_url:
                 file_path = TMP_DIR / f"{name}.3gp"
                 if not file_path.exists() or time.time() - file_path.stat().st_mtime > RECHECK_INTERVAL:
-                    logging.info(f"Pre-downloading {name}")
                     download_and_convert(name, video_url)
             time.sleep(random.randint(5, 10))
         time.sleep(RECHECK_INTERVAL)
@@ -63,14 +62,13 @@ def fetch_latest_video_url(channel_url):
     try:
         result = subprocess.run([
             "yt-dlp", "--flat-playlist", "--playlist-end", "1",
-            "--dump-single-json", "--cookies", "/mnt/data/cookies.txt", channel_url
+            "--dump-single-json", channel_url
         ], capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         video_id = data["entries"][0]["id"]
-        time.sleep(random.randint(5, 10))
         return f"https://www.youtube.com/watch?v={video_id}"
     except Exception as e:
-        logging.error(f"Error fetching video from {channel_url}: {e}")
+        logging.error(f"Error fetching video: {e}")
         return None
 
 def download_and_convert(channel, video_url):
@@ -78,28 +76,23 @@ def download_and_convert(channel, video_url):
     if final_path.exists():
         return final_path
 
-    if not video_url:
-        logging.warning(f"Skipping download for {channel} because video URL is not available.")
-        return None
-
     try:
+        temp_mp4 = TMP_DIR / f"{channel}.mp4"
         subprocess.run([
-            "yt-dlp",
-            "-f", "best[ext=mp4]",
-            "--output", str(TMP_DIR / f"{channel}.%(ext)s"),
-            "--cookies", "/mnt/data/cookies.txt",
-            "--recode-video", "mp4",
-            "--postprocessor-args", "ffmpeg:-vf scale=176:144 -r 10 -b:v 96k -b:a 12k -ac 1 -ar 22050 -f 3gp",
-            video_url
+            "yt-dlp", "-f", "best[ext=mp4]", "-o", str(temp_mp4), video_url
         ], check=True)
 
-        mp4_file = TMP_DIR / f"{channel}.mp4"
-        if mp4_file.exists():
-            mp4_file.rename(final_path)
+        subprocess.run([
+            "ffmpeg", "-i", str(temp_mp4),
+            "-vf", "scale=176:144", "-r", "10",
+            "-b:v", "96k", "-b:a", "12k", "-ac", "1", "-ar", "22050",
+            "-f", "3gp", "-y", str(final_path)
+        ], check=True)
 
-        return final_path if final_path.exists() else None
+        temp_mp4.unlink(missing_ok=True)
+        return final_path
     except Exception as e:
-        logging.error(f"Error converting {channel} to 3gp: {e}")
+        logging.error(f"Error converting {channel}: {e}")
         return None
 
 @app.route("/<channel>.3gp")
@@ -127,8 +120,7 @@ def stream_3gp(channel):
 
     if range_header:
         try:
-            range_value = range_header.strip().split("=")[1]
-            byte1, byte2 = range_value.split("-")
+            byte1, byte2 = range_header.strip().split("=")[1].split("-")
             byte1 = int(byte1)
             byte2 = int(byte2) if byte2 else file_size - 1
         except Exception as e:
@@ -143,7 +135,6 @@ def stream_3gp(channel):
             'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
             'Content-Length': str(length)
         })
-
         return Response(chunk, status=206, headers=headers)
 
     with open(file_path, 'rb') as f:
@@ -154,12 +145,13 @@ def stream_3gp(channel):
 @app.route("/")
 def index():
     files = list(TMP_DIR.glob("*.3gp"))
-    links = [f'<li><a href="/{f.stem}.3gp">{f.stem}.3gp</a> (created: {time.ctime(f.stat().st_mtime)})</li>' for f in files]
+    links = [f'<li><a href="/{f.stem}.3gp">{f.stem}.3gp</a> ({time.ctime(f.stat().st_mtime)})</li>' for f in files]
     return f"<h3>Available Streams</h3><ul>{''.join(links)}</ul>"
 
+# Background workers
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
 threading.Thread(target=cleanup_old_files, daemon=True).start()
-threading.Thread(target=auto_download_3gps, daemon=True).start()
+threading.Thread(target=auto_download_loop, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
