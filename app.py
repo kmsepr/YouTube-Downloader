@@ -64,5 +64,8 @@ def download_video_file():
         # Log and return detailed error message
         return f"Error: {str(e)}", 500
 
+@app.route('/')
+def home():
+    return "Flask app is running!"
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8000)
