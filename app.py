@@ -16,22 +16,22 @@ RECHECK_INTERVAL = 1800       # 30 minutes
 CLEANUP_INTERVAL = 1800       # 30 minutes
 EXPIRE_AGE = 10800            # 3 hours
 
-COOKIES_FILE = "/mnt/data/cookies.txt"
-
 CHANNELS = {
     "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
     "techysporty": "https://youtube.com/@techysporty?si=cVB5OtX_mRJKCnzG",
     "comedy": "https://youtube.com/@malayalamcomedyscene5334?si=NsTvGvpqS1HWl3Lj",
 }
 
-VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
+VIDEO_CACHE = {name: {"url": None, "logo": None, "last_checked": 0} for name in CHANNELS}
 TMP_DIR = Path("/tmp/yt3gp")
 TMP_DIR.mkdir(exist_ok=True)
+
+COOKIES_FILE = "/mnt/data/cookies.txt"
 
 def cleanup_old_files():
     while True:
         now = time.time()
-        for f in TMP_DIR.glob("*.3gp"):
+        for f in TMP_DIR.glob("*.mp4"):
             if now - f.stat().st_mtime > EXPIRE_AGE:
                 try:
                     f.unlink()
@@ -43,9 +43,10 @@ def cleanup_old_files():
 def update_video_cache_loop():
     while True:
         for name, url in CHANNELS.items():
-            video_url = fetch_latest_video_url(url)
+            video_url, logo_url = fetch_latest_video_url(url)
             if video_url:
                 VIDEO_CACHE[name]["url"] = video_url
+                VIDEO_CACHE[name]["logo"] = logo_url
                 VIDEO_CACHE[name]["last_checked"] = time.time()
                 download_and_convert(name, video_url)
             time.sleep(random.randint(5, 10))
@@ -56,7 +57,7 @@ def auto_download_loop():
         for name, data in VIDEO_CACHE.items():
             video_url = data.get("url")
             if video_url:
-                file_path = TMP_DIR / f"{name}.3gp"
+                file_path = TMP_DIR / f"{name}.mp4"
                 if not file_path.exists() or time.time() - file_path.stat().st_mtime > RECHECK_INTERVAL:
                     download_and_convert(name, video_url)
             time.sleep(random.randint(5, 10))
@@ -71,28 +72,29 @@ def fetch_latest_video_url(channel_url):
         ], capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         video_id = data["entries"][0]["id"]
-        return f"https://www.youtube.com/watch?v={video_id}"
+        # Extract channel logo
+        logo_url = data.get("channel_thumbnails", [{}])[-1].get("url")
+        return f"https://www.youtube.com/watch?v={video_id}", logo_url
     except Exception as e:
         logging.error(f"Error fetching video: {e}")
-        return None
+        return None, None
 
 def download_and_convert(channel, video_url):
-    final_path = TMP_DIR / f"{channel}.3gp"
+    final_path = TMP_DIR / f"{channel}.mp4"
     if final_path.exists():
         return final_path
 
     try:
         temp_mp4 = TMP_DIR / f"{channel}.mp4"
         subprocess.run([
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", "best[ext=mp4]", "-o", str(temp_mp4), video_url
+            "yt-dlp", "-f", "best[ext=mp4]", "-o", str(temp_mp4), video_url
         ], check=True)
 
         subprocess.run([
             "ffmpeg", "-i", str(temp_mp4),
-            "-vf", "scale=176:144", "-r", "10",
-            "-b:v", "96k", "-b:a", "12k", "-ac", "1", "-ar", "22050",
-            "-f", "3gp", "-y", str(final_path)
+            "-vf", "scale=320:240", "-r", "15",
+            "-b:v", "384k", "-b:a", "12k", "-ac", "1", "-ar", "22050",
+            "-f", "mp4", "-y", str(final_path)
         ], check=True)
 
         temp_mp4.unlink(missing_ok=True)
@@ -101,14 +103,14 @@ def download_and_convert(channel, video_url):
         logging.error(f"Error converting {channel}: {e}")
         return None
 
-@app.route("/<channel>.3gp")
-def stream_3gp(channel):
+@app.route("/<channel>.mp4")
+def stream_mp4(channel):
     if channel not in CHANNELS:
         return "Channel not found", 404
 
     video_url = VIDEO_CACHE[channel].get("url")
     if not video_url:
-        video_url = fetch_latest_video_url(CHANNELS[channel])
+        video_url = fetch_latest_video_url(CHANNELS[channel])[0]
         if not video_url:
             return "Unable to fetch video", 500
         VIDEO_CACHE[channel]["url"] = video_url
@@ -122,7 +124,7 @@ def stream_3gp(channel):
     file_size = os.path.getsize(file_path)
     range_header = request.headers.get('Range', None)
     headers = {
-        'Content-Type': 'video/3gpp',
+        'Content-Type': 'video/mp4',
         'Accept-Ranges': 'bytes',
     }
 
@@ -152,9 +154,16 @@ def stream_3gp(channel):
 
 @app.route("/")
 def index():
-    files = list(TMP_DIR.glob("*.3gp"))
-    links = [f'<li><a href="/{f.stem}.3gp">{f.stem}.3gp</a> ({time.ctime(f.stat().st_mtime)})</li>' for f in files]
-    return f"<h3>Available Streams</h3><ul>{''.join(links)}</ul>"
+    items = []
+    for name in CHANNELS:
+        file = TMP_DIR / f"{name}.mp4"
+        logo = VIDEO_CACHE[name].get("logo")
+        if file.exists():
+            link = f"/{name}.mp4"
+            time_str = time.ctime(file.stat().st_mtime)
+            logo_img = f'<img src="{logo}" width="50" height="50">' if logo else ""
+            items.append(f'<li>{logo_img} <a href="{link}">{name}.mp4</a> ({time_str})</li>')
+    return f"<h3>Available Streams</h3><ul>{''.join(items)}</ul>"
 
 # Background workers
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
