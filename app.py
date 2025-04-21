@@ -16,10 +16,12 @@ RECHECK_INTERVAL = 1800       # 30 minutes
 CLEANUP_INTERVAL = 1800       # 30 minutes
 EXPIRE_AGE = 10800            # 3 hours
 
+COOKIES_FILE = "/mnt/data/cookies.txt"
+
 CHANNELS = {
     "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
     "techysporty": "https://youtube.com/@techysporty?si=cVB5OtX_mRJKCnzG",
-"comedy": "https://youtube.com/@malayalamcomedyscene5334?si=NsTvGvpqS1HWl3Lj",
+    "comedy": "https://youtube.com/@malayalamcomedyscene5334?si=NsTvGvpqS1HWl3Lj",
 }
 
 VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
@@ -63,7 +65,8 @@ def auto_download_loop():
 def fetch_latest_video_url(channel_url):
     try:
         result = subprocess.run([
-            "yt-dlp", "--flat-playlist", "--playlist-end", "1",
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "--flat-playlist", "--playlist-end", "1",
             "--dump-single-json", channel_url
         ], capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
@@ -81,7 +84,8 @@ def download_and_convert(channel, video_url):
     try:
         temp_mp4 = TMP_DIR / f"{channel}.mp4"
         subprocess.run([
-            "yt-dlp", "-f", "best[ext=mp4]", "-o", str(temp_mp4), video_url
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", "best[ext=mp4]", "-o", str(temp_mp4), video_url
         ], check=True)
 
         subprocess.run([
