@@ -11,10 +11,10 @@ import random
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-REFRESH_INTERVAL = 900        # 15 minutes
-RECHECK_INTERVAL = 1800       # 30 minutes
-CLEANUP_INTERVAL = 1800       # 30 minutes
-EXPIRE_AGE = 10800            # 3 hours
+REFRESH_INTERVAL = 900
+RECHECK_INTERVAL = 1800
+CLEANUP_INTERVAL = 1800
+EXPIRE_AGE = 10800
 
 CHANNELS = {
     "qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
@@ -24,13 +24,13 @@ CHANNELS = {
 }
 
 VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
-TMP_DIR = Path("/tmp/ytmp4")
+TMP_DIR = Path("/tmp/yt3gp")
 TMP_DIR.mkdir(exist_ok=True)
 
 def cleanup_old_files():
     while True:
         now = time.time()
-        for f in TMP_DIR.glob("*.mp4"):
+        for f in TMP_DIR.glob("*.3gp"):
             if now - f.stat().st_mtime > EXPIRE_AGE:
                 try:
                     f.unlink()
@@ -50,13 +50,13 @@ def update_video_cache_loop():
             time.sleep(random.randint(5, 10))
         time.sleep(REFRESH_INTERVAL)
 
-def auto_download_mp4s():
+def auto_download_3gps():
     while True:
         for name, data in VIDEO_CACHE.items():
             video_url = data.get("url")
             if video_url:
-                mp4_path = TMP_DIR / f"{name}.mp4"
-                if not mp4_path.exists() or time.time() - mp4_path.stat().st_mtime > RECHECK_INTERVAL:
+                file_path = TMP_DIR / f"{name}.3gp"
+                if not file_path.exists() or time.time() - file_path.stat().st_mtime > RECHECK_INTERVAL:
                     logging.info(f"Pre-downloading {name}")
                     download_and_convert(name, video_url)
             time.sleep(random.randint(5, 10))
@@ -77,7 +77,7 @@ def fetch_latest_video_url(channel_url):
         return None
 
 def download_and_convert(channel, video_url):
-    final_path = TMP_DIR / f"{channel}.mp4"
+    final_path = TMP_DIR / f"{channel}.3gp"
     if final_path.exists():
         return final_path
 
@@ -92,17 +92,21 @@ def download_and_convert(channel, video_url):
             "--output", str(TMP_DIR / f"{channel}.%(ext)s"),
             "--cookies", "/mnt/data/cookies.txt",
             "--recode-video", "mp4",
-            "--postprocessor-args", "ffmpeg:-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ac 1 -ar 22050",
+            "--postprocessor-args", "ffmpeg:-vf scale=176:144 -r 10 -b:v 96k -b:a 12k -ac 1 -ar 22050 -f 3gp",
             video_url
         ], check=True)
 
+        mp4_file = TMP_DIR / f"{channel}.mp4"
+        if mp4_file.exists():
+            mp4_file.rename(final_path)
+
         return final_path if final_path.exists() else None
     except Exception as e:
-        logging.error(f"Error converting {channel}: {e}")
+        logging.error(f"Error converting {channel} to 3gp: {e}")
         return None
 
-@app.route("/<channel>.mp4")
-def stream_mp4(channel):
+@app.route("/<channel>.3gp")
+def stream_3gp(channel):
     if channel not in CHANNELS:
         return "Channel not found", 404
 
@@ -113,14 +117,14 @@ def stream_mp4(channel):
     VIDEO_CACHE[channel]["url"] = video_url
     VIDEO_CACHE[channel]["last_checked"] = time.time()
 
-    mp4_path = download_and_convert(channel, video_url)
-    if not mp4_path or not mp4_path.exists():
+    file_path = download_and_convert(channel, video_url)
+    if not file_path or not file_path.exists():
         return "Error preparing stream", 500
 
-    file_size = os.path.getsize(mp4_path)
+    file_size = os.path.getsize(file_path)
     range_header = request.headers.get('Range', None)
     headers = {
-        'Content-Type': 'video/mp4',
+        'Content-Type': 'video/3gpp',
         'Accept-Ranges': 'bytes',
     }
 
@@ -134,7 +138,7 @@ def stream_mp4(channel):
             return f"Invalid Range header: {e}", 400
 
         length = byte2 - byte1 + 1
-        with open(mp4_path, 'rb') as f:
+        with open(file_path, 'rb') as f:
             f.seek(byte1)
             chunk = f.read(length)
 
@@ -145,21 +149,20 @@ def stream_mp4(channel):
 
         return Response(chunk, status=206, headers=headers)
 
-    with open(mp4_path, 'rb') as f:
+    with open(file_path, 'rb') as f:
         data = f.read()
     headers['Content-Length'] = str(file_size)
     return Response(data, headers=headers)
 
 @app.route("/")
 def index():
-    files = list(TMP_DIR.glob("*.mp4"))
-    links = [f'<li><a href="/{f.stem}.mp4">{f.stem}.mp4</a> (created: {time.ctime(f.stat().st_mtime)})</li>' for f in files]
+    files = list(TMP_DIR.glob("*.3gp"))
+    links = [f'<li><a href="/{f.stem}.3gp">{f.stem}.3gp</a> (created: {time.ctime(f.stat().st_mtime)})</li>' for f in files]
     return f"<h3>Available Streams</h3><ul>{''.join(links)}</ul>"
 
-# Start background threads
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
 threading.Thread(target=cleanup_old_files, daemon=True).start()
-threading.Thread(target=auto_download_mp4s, daemon=True).start()
+threading.Thread(target=auto_download_3gps, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
