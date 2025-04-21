@@ -41,8 +41,5 @@ COPY . /app
 # Expose port for Flask app (8000)
 EXPOSE 8000
 
-# Install gunicorn for production deployment
-RUN pip install gunicorn
-
-# Use gunicorn to run the Flask app in production mode
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+# Run the Flask app with the built-in server
+CMD ["python", "app.py"]
