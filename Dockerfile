@@ -5,11 +5,18 @@ RUN apt-get update && apt-get install -y \
     wget curl git make autoconf automake build-essential cmake pkg-config \
     libtool libvorbis-dev libmp3lame-dev libx264-dev zlib1g-dev \
     libass-dev libfreetype6-dev libopus-dev yasm \
-    libfdk-aac-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp
-RUN pip install yt-dlp
+# Install ffmpeg dependencies and build libfdk-aac from source
+RUN wget https://github.com/mstorsjo/fdk-aac/archive/v2.0.2.tar.gz \
+    && tar -xvzf v2.0.2.tar.gz \
+    && cd fdk-aac-2.0.2 \
+    && autoreconf -fiv \
+    && ./configure --enable-shared \
+    && make -j$(nproc) \
+    && make install \
+    && cd .. \
+    && rm -rf fdk-aac-2.0.2 v2.0.2.tar.gz
 
 # Install FFmpeg from source with x264 (H.264) and AAC support
 RUN wget https://ffmpeg.org/releases/ffmpeg-5.1.tar.bz2 \
@@ -19,6 +26,9 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-5.1.tar.bz2 \
     && make -j$(nproc) \
     && make install \
     && rm -rf /ffmpeg-5.1
+
+# Install yt-dlp
+RUN pip install yt-dlp
 
 # Optional: Add your app code
 WORKDIR /app
