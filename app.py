@@ -100,11 +100,13 @@ def stream_3gp(channel):
     if channel not in CHANNELS:
         return "Channel not found", 404
 
-    video_url = VIDEO_CACHE[channel].get("url") or fetch_latest_video_url(CHANNELS[channel])
+    video_url = VIDEO_CACHE[channel].get("url")
     if not video_url:
-        return "Unable to fetch video", 500
+        video_url = fetch_latest_video_url(CHANNELS[channel])
+        if not video_url:
+            return "Unable to fetch video", 500
+        VIDEO_CACHE[channel]["url"] = video_url
 
-    VIDEO_CACHE[channel]["url"] = video_url
     VIDEO_CACHE[channel]["last_checked"] = time.time()
 
     file_path = download_and_convert(channel, video_url)
