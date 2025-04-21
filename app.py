@@ -23,7 +23,7 @@ CHANNELS = {
     "yaqeen": "https://www.youtube.com/@yaqeeninstituteofficial/videos"
 }
 
-VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
+VIDEO_CACHE = {name: {"url": None, "thumb": None, "last_checked": 0} for name in CHANNELS}
 TMP_DIR = Path("/tmp/ytmp4")
 TMP_DIR.mkdir(exist_ok=True)
 
@@ -42,9 +42,10 @@ def cleanup_old_files():
 def update_video_cache_loop():
     while True:
         for name, url in CHANNELS.items():
-            video_url = fetch_latest_video_url(url)
+            video_url, thumbnail = fetch_latest_video_url(url)
             if video_url:
                 VIDEO_CACHE[name]["url"] = video_url
+                VIDEO_CACHE[name]["thumb"] = thumbnail
                 VIDEO_CACHE[name]["last_checked"] = time.time()
                 download_and_convert(name, video_url)
             time.sleep(random.randint(5, 10))
@@ -69,12 +70,20 @@ def fetch_latest_video_url(channel_url):
             "--dump-single-json", "--cookies", "/mnt/data/cookies.txt", channel_url
         ], capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
-        video_id = data["entries"][0]["id"]
-        time.sleep(random.randint(5, 10))
-        return f"https://www.youtube.com/watch?v={video_id}"
+        entry = data["entries"][0]
+        video_id = entry["id"]
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        details = subprocess.run([
+            "yt-dlp", "--dump-json", "--cookies", "/mnt/data/cookies.txt", video_url
+        ], capture_output=True, text=True, check=True)
+        video_info = json.loads(details.stdout)
+        thumbnail = video_info.get("thumbnail")
+
+        return video_url, thumbnail
     except Exception as e:
         logging.error(f"Error fetching video from {channel_url}: {e}")
-        return None
+        return None, None
 
 def download_and_convert(channel, video_url):
     final_path = TMP_DIR / f"{channel}.mp4"
@@ -94,7 +103,6 @@ def download_and_convert(channel, video_url):
             "--recode-video", "mp4",
             "--postprocessor-args", "ffmpeg:-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ac 1 -ar 22050"
         ], check=True)
-
         return final_path if final_path.exists() else None
     except Exception as e:
         logging.error(f"Error converting {channel} to mp4: {e}")
@@ -105,7 +113,7 @@ def stream_mp4(channel):
     if channel not in CHANNELS:
         return "Channel not found", 404
 
-    video_url = VIDEO_CACHE[channel].get("url") or fetch_latest_video_url(CHANNELS[channel])
+    video_url = VIDEO_CACHE[channel].get("url") or fetch_latest_video_url(CHANNELS[channel])[0]
     if not video_url:
         return "Unable to fetch video", 500
 
@@ -151,9 +159,19 @@ def stream_mp4(channel):
 
 @app.route("/")
 def index():
-    files = list(TMP_DIR.glob("*.mp4"))
-    links = [f'<li><a href="/{f.stem}.mp4">{f.stem}.mp4</a> (created: {time.ctime(f.stat().st_mtime)})</li>' for f in files]
-    return f"<h3>Available Streams</h3><ul>{''.join(links)}</ul>"
+    html = "<h3>Available Streams</h3><ul style='list-style: none;'>"
+    for name, data in VIDEO_CACHE.items():
+        thumb = data.get("thumb") or "https://img.youtube.com/vi/default.jpg"
+        video_link = f"/{name}.mp4"
+        thumb_html = f'<img src="{thumb}" alt="{name}" style="width:120px;height:auto;margin-right:10px;">'
+        html += f'''
+        <li style="margin-bottom: 15px; display: flex; align-items: center;">
+            {thumb_html}
+            <a href="{video_link}">{name}.mp4</a>
+        </li>
+        '''
+    html += "</ul>"
+    return html
 
 threading.Thread(target=update_video_cache_loop, daemon=True).start()
 threading.Thread(target=cleanup_old_files, daemon=True).start()
