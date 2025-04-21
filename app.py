@@ -18,7 +18,6 @@ CLEANUP_INTERVAL = 1800       # 30 minutes
 EXPIRE_AGE = 10800            # 3 hours
 
 CHANNELS = {
- 
     "comedy": "https://youtube.com/@malayalamcomedyscene5334/videos",
     "studyiq": "https://youtube.com/@studyiqiasenglish/videos",
     "vijayakumarblathur": "https://youtube.com/@vijayakumarblathur/videos",
@@ -71,7 +70,8 @@ def fetch_latest_video_url(name, channel_url):
             "yt-dlp",
             "--dump-single-json",
             "--playlist-end", "1",
-            "--cookies", "/mnt/data/cookies.txt","--user-agent", "Mozilla/5.0",
+            "--cookies", "/mnt/data/cookies.txt",
+            "--user-agent", "Mozilla/5.0",
             channel_url
         ], capture_output=True, text=True, check=True)
 
@@ -97,9 +97,9 @@ def download_and_convert(channel, video_url):
             "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",
             "--merge-output-format", "mp4",
             "--output", str(TMP_DIR / f"{channel}.%(ext)s"),
-            "--cookies", "/mnt/data/cookies.txt", "--user-agent", "Mozilla/5.0",
-            "--postprocessor-args",
-            "-vf scale=320:240 -r 15 -b:v 384k -c:v libx264 -preset veryfast -ac 1 -ar 22050 -b:a 12k",
+            "--cookies", "/mnt/data/cookies.txt",
+            "--user-agent", "Mozilla/5.0",
+            "--postprocessor-args", "ffmpeg:-vf scale=320:240 -r 15 -b:v 384k -c:v libx264 -preset veryfast -ac 1 -ar 22050 -b:a 12k",
             video_url
         ], check=True)
         return final_path if final_path.exists() else None
