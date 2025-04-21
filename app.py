@@ -24,6 +24,8 @@ VIDEO_CACHE = {name: {"url": None, "last_checked": 0} for name in CHANNELS}
 TMP_DIR = Path("/tmp/yt3gp")
 TMP_DIR.mkdir(exist_ok=True)
 
+COOKIES_FILE = "/mnt/data/cookies.txt"
+
 def cleanup_old_files():
     while True:
         now = time.time()
@@ -62,7 +64,7 @@ def fetch_latest_video_url(channel_url):
     try:
         result = subprocess.run([
             "yt-dlp", "--flat-playlist", "--playlist-end", "1",
-            "--dump-single-json", channel_url
+            "--dump-single-json", "--cookies", COOKIES_FILE, channel_url
         ], capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         video_id = data["entries"][0]["id"]
@@ -78,17 +80,16 @@ def download_and_convert(channel, video_url):
 
     try:
         temp_mp4 = TMP_DIR / f"{channel}.mp4"
-
-        # Force 240p or lower MP4 download
         subprocess.run([
-            "yt-dlp", "-f", "mp4[height<=240]", "-o", str(temp_mp4), video_url
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", "mp4[height<=240]",
+            "-o", str(temp_mp4), video_url
         ], check=True)
 
-        # Convert to 3GP with 320x240, 384kbps video, 12kbps audio
         subprocess.run([
             "ffmpeg", "-i", str(temp_mp4),
-            "-vf", "scale=320:240", "-r", "15",
-            "-b:v", "384k", "-b:a", "12k", "-ac", "1", "-ar", "22050",
+            "-vf", "scale=176:144", "-r", "10",
+            "-b:v", "96k", "-b:a", "12k", "-ac", "1", "-ar", "22050",
             "-f", "3gp", "-y", str(final_path)
         ], check=True)
 
@@ -97,6 +98,7 @@ def download_and_convert(channel, video_url):
     except Exception as e:
         logging.error(f"Error converting {channel}: {e}")
         return None
+
 @app.route("/<channel>.3gp")
 def stream_3gp(channel):
     if channel not in CHANNELS:
