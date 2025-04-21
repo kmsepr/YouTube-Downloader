@@ -30,6 +30,10 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-5.1.tar.bz2 \
 # Install yt-dlp
 RUN pip install yt-dlp
 
+# Install Flask and other Python dependencies
+COPY requirements.txt /app/
+RUN pip install -r /app/requirements.txt
+
 # Optional: Add your app code
 WORKDIR /app
 COPY . /app
@@ -37,5 +41,8 @@ COPY . /app
 # Expose port for Flask app (8000)
 EXPOSE 8000
 
-# Run Flask app (adjust as needed)
-CMD ["python", "app.py"]
+# Install gunicorn for production deployment
+RUN pip install gunicorn
+
+# Use gunicorn to run the Flask app in production mode
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
