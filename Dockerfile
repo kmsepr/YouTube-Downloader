@@ -1,45 +1,31 @@
 FROM python:3.10-slim
 
-# Install dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     wget curl git make autoconf automake build-essential cmake pkg-config \
-    libtool libvorbis-dev libmp3lame-dev libx264-dev libfdk-aac-dev zlib1g-dev \
+    libtool libvorbis-dev libmp3lame-dev libx264-dev zlib1g-dev \
     libass-dev libfreetype6-dev libopus-dev yasm \
+    libfdk-aac-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp
-RUN pip install --no-cache-dir yt-dlp flask
+RUN pip install yt-dlp
 
-# Compile FFmpeg with 3GP support (H.264 + AAC)
-WORKDIR /opt
-RUN git clone https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
-    cd ffmpeg && \
-    ./configure \
-        --enable-gpl \
-        --enable-libx264 \
-        --enable-libmp3lame \
-        --enable-libfdk-aac \
-        --enable-nonfree \
-        --disable-debug \
-        --enable-small \
-        --enable-pic \
-        --disable-doc \
-        --disable-ffplay \
-        --disable-ffprobe \
-        --disable-devices \
-        --disable-avdevice \
-        --disable-postproc \
-        --disable-network \
-        --prefix=/usr/local && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf ffmpeg
+# Install FFmpeg from source with x264 (H.264) and AAC support
+RUN wget https://ffmpeg.org/releases/ffmpeg-5.1.tar.bz2 \
+    && tar -xjf ffmpeg-5.1.tar.bz2 \
+    && cd ffmpeg-5.1 \
+    && ./configure --enable-gpl --enable-libfdk-aac --enable-libx264 --enable-nonfree --enable-pic \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /ffmpeg-5.1
 
-# Add app code
+# Optional: Add your app code
 WORKDIR /app
-COPY . .
+COPY . /app
 
-# Port
+# Expose port for Flask app (8000)
 EXPOSE 8000
 
-# Run the app
+# Run Flask app (adjust as needed)
 CMD ["python", "app.py"]
