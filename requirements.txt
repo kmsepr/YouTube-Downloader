@@ -1,1 +1,4 @@
 flask
+yt-dlp
+requests 
+unidecode
