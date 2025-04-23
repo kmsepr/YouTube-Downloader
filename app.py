@@ -1,195 +1,177 @@
-from flask import Flask, Response, request
-import subprocess
-import json
 import os
-import logging
 import time
-import threading
+import logging
+import subprocess
+from flask import Flask, request, Response, redirect
 from pathlib import Path
-import random
+from urllib.parse import quote_plus
+import requests
+import json
+from unidecode import unidecode
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-
-REFRESH_INTERVAL = 900        # 15 minutes
-RECHECK_INTERVAL = 1800       # 30 minutes
-CLEANUP_INTERVAL = 1800       # 30 minutes
-EXPIRE_AGE = 10800            # 3 hours
-
-CHANNELS = {
-    "movieworld": "https://youtube.com/@movieworldmalayalammovies/videos",
-    "comedy": "https://youtube.com/@malayalamcomedyscene5334/videos",
-    "studyiq": "https://youtube.com/@studyiqiasenglish/videos",
-}
-
-VIDEO_CACHE = {name: {"url": None, "last_checked": 0, "thumb": None} for name in CHANNELS}
-TMP_DIR = Path("/tmp/ytmp4")
+TMP_DIR = Path("/mnt/data/ytmp3")
 TMP_DIR.mkdir(exist_ok=True)
 
-def cleanup_old_files():
-    while True:
-        now = time.time()
-        for f in TMP_DIR.glob("*.mp4"):
-            if now - f.stat().st_mtime > EXPIRE_AGE:
-                try:
-                    f.unlink()
-                    meta = f.with_suffix('.meta')
-                    if meta.exists():
-                        meta.unlink()
-                    logging.info(f"Deleted old file: {f}")
-                except Exception as e:
-                    logging.warning(f"Could not delete {f}: {e}")
-        time.sleep(CLEANUP_INTERVAL)
+TITLE_CACHE = TMP_DIR / "title_cache.json"
+if not TITLE_CACHE.exists():
+    TITLE_CACHE.write_text("{}", encoding="utf-8")
 
-def update_video_cache_loop():
-    while True:
-        for name, url in CHANNELS.items():
-            video_url, thumb_url, upload_date = fetch_latest_video_url(url)
-            if video_url:
-                VIDEO_CACHE[name]["url"] = video_url
-                VIDEO_CACHE[name]["thumb"] = thumb_url
-                VIDEO_CACHE[name]["last_checked"] = time.time()
-                download_and_convert(name, video_url, upload_date)
-            time.sleep(random.randint(5, 10))
-        time.sleep(REFRESH_INTERVAL)
+FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
-def auto_download_mp4s():
-    while True:
-        for name, data in VIDEO_CACHE.items():
-            video_url = data.get("url")
-            if video_url:
-                meta_path = TMP_DIR / f"{name}.meta"
-                upload_date = None
-                if meta_path.exists():
-                    with open(meta_path) as f:
-                        upload_date = f.read().strip()
-                logging.info(f"Pre-downloading {name}")
-                download_and_convert(name, video_url, upload_date)
-            time.sleep(random.randint(5, 10))
-        time.sleep(RECHECK_INTERVAL)
+logging.basicConfig(level=logging.DEBUG)
 
-def fetch_latest_video_url(channel_url):
+def save_title(video_id, title):
     try:
-        result = subprocess.run([
-            "yt-dlp", "--flat-playlist", "--playlist-end", "1",
-            "--dump-single-json", "--cookies", "/mnt/data/cookies.txt", channel_url
-        ], capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
-        video_id = data["entries"][0]["id"]
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        cache = {}
+    cache[video_id] = title
+    TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
-        meta = subprocess.run([
-            "yt-dlp", "-j", "--cookies", "/mnt/data/cookies.txt", video_url
-        ], capture_output=True, text=True, check=True)
-        video_info = json.loads(meta.stdout)
-        thumb_url = video_info.get("thumbnail")
-        upload_date = video_info.get("upload_date")
-
-        time.sleep(random.randint(5, 10))
-        return video_url, thumb_url, upload_date
-    except Exception as e:
-        logging.error(f"Error fetching video from {channel_url}: {e}")
-        return None, None, None
-
-def download_and_convert(channel, video_url, upload_date=None):
-    final_path = TMP_DIR / f"{channel}.mp4"
-    meta_path = TMP_DIR / f"{channel}.meta"
-
-    # Check timestamp to skip download
-    if upload_date and meta_path.exists():
-        with open(meta_path) as f:
-            old_date = f.read().strip()
-        if old_date == upload_date and final_path.exists():
-            logging.info(f"[VideoConvertor] Not downloading {channel}; already up-to-date.")
-            return final_path
-
-    if not video_url:
-        logging.warning(f"Skipping download for {channel} because video URL is not available.")
-        return None
-
+def load_title(video_id):
     try:
-        subprocess.run([
-            "yt-dlp",
-            video_url,
-            "-f", "best[ext=mp4]",
-            "--output", str(TMP_DIR / f"{channel}.%(ext)s"),
-            "--cookies", "/mnt/data/cookies.txt",
-            "--recode-video", "mp4",
-            "--postprocessor-args", "ffmpeg:-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ac 1 -ar 22050"
-        ], check=True)
+        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
+        return cache.get(video_id, video_id)
+    except Exception:
+        return video_id
 
-        if upload_date:
-            with open(meta_path, "w") as f:
-                f.write(upload_date)
+def get_unique_video_ids():
+    files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
+    unique_ids = {}
+    for file in files:
+        vid = file.stem.split("_")[0]
+        if vid not in unique_ids:
+            unique_ids[vid] = file
+    return unique_ids
 
-        return final_path if final_path.exists() else None
-    except Exception as e:
-        logging.error(f"Error converting {channel} to mp4: {e}")
-        return None
-
-@app.route("/<channel>.mp4")
-def stream_mp4(channel):
-    if channel not in CHANNELS:
-        return "Channel not found", 404
-
-    video_url = VIDEO_CACHE[channel].get("url") or fetch_latest_video_url(CHANNELS[channel])[0]
-    if not video_url:
-        return "Unable to fetch video", 500
-
-    VIDEO_CACHE[channel]["url"] = video_url
-    VIDEO_CACHE[channel]["last_checked"] = time.time()
-
-    file_path = download_and_convert(channel, video_url)
-    if not file_path or not file_path.exists():
-        return "Error preparing stream", 500
-
-    file_size = os.path.getsize(file_path)
-    range_header = request.headers.get('Range', None)
-    headers = {
-        'Content-Type': 'video/mp4',
-        'Accept-Ranges': 'bytes',
-    }
-
-    if range_header:
-        try:
-            range_value = range_header.strip().split("=")[1]
-            byte1, byte2 = range_value.split("-")
-            byte1 = int(byte1)
-            byte2 = int(byte2) if byte2 else file_size - 1
-        except Exception as e:
-            return f"Invalid Range header: {e}", 400
-
-        length = byte2 - byte1 + 1
-        with open(file_path, 'rb') as f:
-            f.seek(byte1)
-            chunk = f.read(length)
-
-        headers.update({
-            'Content-Range': f'bytes {byte1}-{byte2}/{file_size}',
-            'Content-Length': str(length)
-        })
-
-        return Response(chunk, status=206, headers=headers)
-
-    with open(file_path, 'rb') as f:
-        data = f.read()
-    headers['Content-Length'] = str(file_size)
-    return Response(data, headers=headers)
+def safe_filename(name):
+    name = unidecode(name)  # Transliterates Unicode to ASCII
+    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
 @app.route("/")
 def index():
-    files = list(TMP_DIR.glob("*.mp4"))
-    links = []
-    for f in files:
-        channel = f.stem
-        thumb = VIDEO_CACHE.get(channel, {}).get("thumb")
-        thumb_html = f'<img src="{thumb}" alt="{channel}" width="120"><br>' if thumb else ''
-        links.append(f'<li>{thumb_html}<a href="/{channel}.mp4">{channel}.mp4</a> (created: {time.ctime(f.stat().st_mtime)})</li>')
-    return f"<h3>Available MP4 Streams</h3><ul>{''.join(links)}</ul>"
+    search_html = """<form method='get' action='/search'>
+    <input type='text' name='q' placeholder='Search YouTube...'>
+    <input type='submit' value='Search'></form><br>"""
 
-threading.Thread(target=update_video_cache_loop, daemon=True).start()
-threading.Thread(target=cleanup_old_files, daemon=True).start()
-threading.Thread(target=auto_download_mp4s, daemon=True).start()
+    cached_html = "<h3>Cached Files</h3>"
+    for video_id, file in get_unique_video_ids().items():
+        ext = file.suffix.lstrip(".")
+        title = load_title(video_id)
+        cached_html += f"""
+        <div style='margin-bottom:10px;'>
+            <img src='https://i.ytimg.com/vi/{video_id}/mqdefault.jpg' width='120'><br>
+            <b>{title}</b><br>
+            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
+            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
+        </div>
+        """
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
+
+@app.route("/search")
+def search():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return redirect("/")
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "q": query,
+        "part": "snippet",
+        "type": "video",
+        "maxResults": 5
+    }
+
+    r = requests.get(url, params=params)
+    results = r.json().get("items", [])
+
+    html = f"""
+    <html><head><title>Search results for '{query}'</title></head>
+    <body style='font-family:sans-serif;'>
+    <form method='get' action='/search'>
+        <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
+        <input type='submit' value='Search'>
+    </form><br><h3>Search results for '{query}'</h3>
+    """
+
+    for item in results:
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        thumbnail = item["snippet"]["thumbnails"]["medium"]["url"]
+        save_title(video_id, title)
+        html += f"""
+        <div style='margin-bottom:10px;'>
+            <img src='{thumbnail}' width='120'><br>
+            <b>{title}</b><br>
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
+        </div>
+        """
+    html += "</body></html>"
+    return html
+
+@app.route("/download")
+def download():
+    video_id = request.args.get("q")
+    fmt = request.args.get("fmt", "mp3")
+    if not video_id:
+        return "Missing video ID", 400
+
+    title = safe_filename(load_title(video_id))
+    ext = "mp3" if fmt == "mp3" else "mp4"
+    filename = f"{video_id}_{title}.{ext}"
+    file_path = TMP_DIR / filename
+
+    if not file_path.exists():
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        cookies_path = "/mnt/data/cookies.txt"
+        if not Path(cookies_path).exists():
+            return "Cookies file not found", 400
+
+        base_cmd = [
+            "yt-dlp",
+            "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
+            "--user-agent", FIXED_USER_AGENT,
+            "--cookies", cookies_path,
+            url
+        ]
+
+        if fmt == "mp3":
+            cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
+                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
+                "--extract-audio", "--audio-format", "mp3"
+            ]
+        else:
+            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
+                "--recode-video", "mp4",
+                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
+            ]
+
+        success = False
+        for attempt in range(3):
+            try:
+                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
+                subprocess.run(cmd, check=True)
+                success = True
+                break
+            except subprocess.CalledProcessError as e:
+                logging.warning(f"Attempt {attempt + 1} failed: {e}")
+                time.sleep(10)
+
+        if not success or not file_path.exists():
+            return "Download failed after retries", 500
+
+    def generate():
+        with open(file_path, "rb") as f:
+            yield from f
+
+    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
+    return Response(generate(), mimetype=mimetype, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
