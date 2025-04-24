@@ -9,10 +9,10 @@ COPY . .
 
 # Install dependencies, including FFmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg && \  # Install FFmpeg for video and audio processing
-    pip install --no-cache-dir -r requirements.txt && \  # Install Python dependencies
-    apt-get clean && \  # Clean up apt cache to reduce image size
-    rm -rf /var/lib/apt/lists/*  # Remove package list files
+    ffmpeg \  # Install FFmpeg for video and audio processing
+    && pip install --no-cache-dir -r requirements.txt \  # Install Python dependencies
+    && apt-get clean \  # Clean up apt cache to reduce image size
+    && rm -rf /var/lib/apt/lists/*  # Remove package list files
 
 # Expose port 8000 for the Flask application
 EXPOSE 8000
