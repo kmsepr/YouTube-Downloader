@@ -1,26 +1,53 @@
-# Use a Python 3.9 slim base image
-FROM python:3.9-slim
+FROM python:3.11-slim
 
-# Set the working directory inside the container
+# Install required build tools and dependencies
+RUN apt-get update && apt-get install -y \
+    wget build-essential pkg-config \
+    libx264-dev libx265-dev libvpx-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
+    libvorbis-dev libass-dev libfreetype6-dev libssl-dev yasm libtool \
+    zlib1g-dev git curl ffmpeg \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
 WORKDIR /app
 
-# Copy all files from the current directory to the container's /app directory
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+ && chmod +x /usr/local/bin/yt-dlp
+
+# Optional: build FFmpeg from source with 3gp-compatible codecs (H.263, AAC)
+# Comment out if system ffmpeg is sufficient
+RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
+    cd ffmpeg && \
+    ./configure --prefix=/usr/local \
+        --disable-debug \
+        --enable-gpl \
+        --enable-libx264 \
+        --enable-libmp3lame \
+        --enable-libfdk-aac \
+        --enable-libopus \
+        --enable-libvorbis \
+        --enable-libass \
+        --enable-libfreetype \
+        --enable-nonfree \
+        --enable-encoder=h263 \
+        --enable-decoder=h263 \
+        --enable-muxer=3gp \
+        --enable-demuxer=3gp \
+        --enable-encoder=aac \
+        --enable-decoder=aac \
+        --enable-small && \
+    make -j$(nproc) && make install && cd .. && rm -rf ffmpeg
+
+# Copy app files
 COPY . .
 
-# Install dependencies, including FFmpeg
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \  # Install FFmpeg for video and audio processing
-    && pip install --no-cache-dir -r requirements.txt \  # Install Python dependencies
-    && apt-get clean \  # Clean up apt cache to reduce image size
-    && rm -rf /var/lib/apt/lists/*  # Remove package list files
-
-# Expose port 8000 for the Flask application
+# Expose port
 EXPOSE 8000
 
-# Set environment variables for Flask application
-ENV FLASK_APP=app.py
-ENV FLASK_RUN_HOST=0.0.0.0  # Make the app accessible on all interfaces
-ENV FLASK_RUN_PORT=8000  # Set the Flask app to run on port 8000
-
-# Start the Flask application when the container is run
-CMD ["flask", "run"]
+# Run the Flask app
+CMD ["python", "app.py"]
