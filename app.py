@@ -170,12 +170,18 @@ def download():
                 logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
                 subprocess.run(cmd, check=True)
                 if fmt == "3gp":
+                    # Here we change to H.263 for video and AAC for audio in 3GP format
                     subprocess.run([
                         "ffmpeg", "-y", "-i", str(temp_mp4),
-                        "-vf", "scale=176:144", "-r", "12",
-                        "-acodec", "libopencore_amrnb", "-ar", "8000",
-                        "-ab", "12.2k", "-ac", "1",
-                        "-b:v", "96k", str(output_3gp)
+                        "-vf", "scale=176:144", "-r", "15",  # QCIF resolution with 15fps
+                        "-c:v", "h263",  # Use H.263 for video
+                        "-c:a", "aac",  # Use AAC for audio
+                        "-ar", "22050",  # Audio sample rate
+                        "-ab", "64k",  # Audio bitrate
+                        "-ac", "1",  # Mono audio
+                        "-b:v", "128k",  # Video bitrate
+                        "-f", "3gp",  # Force 3GP container format
+                        str(output_3gp)
                     ], check=True)
                 success = True
                 break
