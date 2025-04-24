@@ -10,7 +10,7 @@ import json
 from unidecode import unidecode
 
 app = Flask(__name__)
-TMP_DIR = Path("/mnt/data/ytmp3")
+TMP_DIR = Path("/mnt/data/ytcache")
 TMP_DIR.mkdir(exist_ok=True)
 
 TITLE_CACHE = TMP_DIR / "title_cache.json"
@@ -38,7 +38,7 @@ def load_title(video_id):
         return video_id
 
 def get_unique_video_ids():
-    files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
+    files = list(TMP_DIR.glob("*.*"))
     unique_ids = {}
     for file in files:
         vid = file.stem.split("_")[0]
@@ -47,7 +47,7 @@ def get_unique_video_ids():
     return unique_ids
 
 def safe_filename(name):
-    name = unidecode(name)  # Transliterates Unicode to ASCII
+    name = unidecode(name)
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
 @app.route("/")
@@ -64,8 +64,9 @@ def index():
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
-            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
+            <a href='/download?q={video_id}&fmt=mp3'>MP3</a> |
+            <a href='/download?q={video_id}&fmt=mp4'>MP4</a> |
+            <a href='/download?q={video_id}&fmt=3gp'>3GP</a>
         </div>
         """
     return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
@@ -88,14 +89,12 @@ def search():
     r = requests.get(url, params=params)
     results = r.json().get("items", [])
 
-    html = f"""
-    <html><head><title>Search results for '{query}'</title></head>
+    html = f"""<html><head><title>Search results for '{query}'</title></head>
     <body style='font-family:sans-serif;'>
     <form method='get' action='/search'>
         <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
         <input type='submit' value='Search'>
-    </form><br><h3>Search results for '{query}'</h3>
-    """
+    </form><br><h3>Search results for '{query}'</h3>"""
 
     for item in results:
         video_id = item["id"]["videoId"]
@@ -105,10 +104,10 @@ def search():
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
-            <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
-        </div>
-        """
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>MP3</a> |
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>MP4</a> |
+            <a href='/download?q={quote_plus(video_id)}&fmt=3gp'>3GP</a>
+        </div>"""
     html += "</body></html>"
     return html
 
@@ -132,7 +131,7 @@ def download():
         return "Missing video ID", 400
 
     title = safe_filename(load_title(video_id))
-    ext = "mp3" if fmt == "mp3" else "mp4"
+    ext = "3gp" if fmt == "3gp" else ("mp4" if fmt == "mp4" else "mp3")
     filename = f"{video_id}_{title}.{ext}"
     file_path = TMP_DIR / filename
 
@@ -152,20 +151,31 @@ def download():
 
         if fmt == "mp3":
             cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
-                "--extract-audio", "--audio-format", "mp3"
+                "--extract-audio", "--audio-format", "mp3",
+                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
             ]
-        else:
+        elif fmt == "mp4":
             cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
                 "--recode-video", "mp4",
                 "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
             ]
+        else:  # 3gp
+            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:]
+            temp_mp4 = TMP_DIR / f"{video_id}_{title}.mp4"
+            output_3gp = TMP_DIR / filename
 
         success = False
         for attempt in range(3):
             try:
                 logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
                 subprocess.run(cmd, check=True)
+                if fmt == "3gp":
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", str(temp_mp4),
+                        "-vf", "scale=176:144", "-r", "12",
+                        "-acodec", "libopencore_amrnb", "-ar", "8000", "-ab", "12.2k", "-ac", "1",
+                        "-b:v", "96k", str(output_3gp)
+                    ], check=True)
                 success = True
                 break
             except subprocess.CalledProcessError as e:
@@ -179,7 +189,12 @@ def download():
         with open(file_path, "rb") as f:
             yield from f
 
-    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
+    mimetype = {
+        "mp3": "audio/mpeg",
+        "mp4": "video/mp4",
+        "3gp": "video/3gpp"
+    }.get(ext, "application/octet-stream")
+
     return Response(generate(), mimetype=mimetype, headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
