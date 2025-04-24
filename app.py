@@ -61,8 +61,8 @@ def index():
         ext = file.suffix.lstrip(".")
         title = load_title(video_id)
         cached_html += f"""
-        <div style='margin-bottom:10px;'>
-            <img src='https://i.ytimg.com/vi/{video_id}/mqdefault.jpg' width='120'><br>
+        <div style='margin-bottom:10px; font-size:small;'>
+            <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
             <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
@@ -100,11 +100,10 @@ def search():
     for item in results:
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
-        thumbnail = item["snippet"]["thumbnails"]["medium"]["url"]
         save_title(video_id, title)
         html += f"""
-        <div style='margin-bottom:10px;'>
-            <img src='{thumbnail}' width='120'><br>
+        <div style='margin-bottom:10px; font-size:small;'>
+            <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
             <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
             <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
@@ -112,6 +111,18 @@ def search():
         """
     html += "</body></html>"
     return html
+
+@app.route("/thumb/<video_id>")
+def thumbnail_proxy(video_id):
+    url = f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
+    try:
+        r = requests.get(url, headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        if r.status_code == 200:
+            return Response(r.content, mimetype="image/jpeg")
+        else:
+            return "Thumbnail not found", 404
+    except Exception:
+        return "Error fetching thumbnail", 500
 
 @app.route("/download")
 def download():
