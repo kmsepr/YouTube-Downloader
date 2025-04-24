@@ -4,8 +4,16 @@ WORKDIR /app
 
 COPY . .
 
-RUN apt-get update && apt-get install -y ffmpeg && \
-    pip install --no-cache-dir -r requirements.txt
+# Install dependencies and build FFmpeg with AMR support
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    wget \
+    yasm \
+    libopencore-amrnb-dev \
+    libopencore-amrwb-dev \
+    ffmpeg \
+ && pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
 
