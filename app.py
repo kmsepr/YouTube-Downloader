@@ -76,9 +76,6 @@ def search():
     if not query:
         return redirect("/")
 
-    if not YOUTUBE_API_KEY:
-        return "<h3>Server error: YouTube API key is missing.</h3>", 500
-
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
         "key": YOUTUBE_API_KEY,
@@ -88,17 +85,8 @@ def search():
         "maxResults": 5
     }
 
-    try:
-        r = requests.get(url, params=params, timeout=5)
-        if r.status_code == 403:
-            return "<h3>YouTube API quota exceeded or key is invalid (403).</h3>", 403
-        elif r.status_code != 200:
-            return f"<h3>Search failed with status code {r.status_code}</h3>", r.status_code
-
-        results = r.json().get("items", [])
-
-    except requests.exceptions.RequestException as e:
-        return f"<h3>Network error: {e}</h3>", 500
+    r = requests.get(url, params=params)
+    results = r.json().get("items", [])
 
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
@@ -108,9 +96,6 @@ def search():
         <input type='submit' value='Search'>
     </form><br><h3>Search results for '{query}'</h3>
     """
-
-    if not results:
-        html += "<p>No videos found.</p>"
 
     for item in results:
         video_id = item["id"]["videoId"]
