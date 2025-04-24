@@ -4,15 +4,12 @@ WORKDIR /app
 
 COPY . .
 
-# Install dependencies and build FFmpeg with AMR support
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    pkg-config \
-    wget \
-    yasm \
+    ffmpeg \
     libopencore-amrnb-dev \
     libopencore-amrwb-dev \
-    ffmpeg \
+    build-essential \
+    yasm \
  && pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
