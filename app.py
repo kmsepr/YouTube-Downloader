@@ -157,7 +157,7 @@ def download():
         elif fmt == "mp4":
             cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
                 "--recode-video", "mp4",
-                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
+                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k -ar 22050 -ac 1"
             ]
         else:  # 3gp
             cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:]
@@ -173,7 +173,8 @@ def download():
                     subprocess.run([
                         "ffmpeg", "-y", "-i", str(temp_mp4),
                         "-vf", "scale=176:144", "-r", "12",
-                        "-acodec", "libopencore_amrnb", "-ar", "8000", "-ab", "12.2k", "-ac", "1",
+                        "-acodec", "libopencore_amrnb", "-ar", "8000",
+                        "-ab", "12.2k", "-ac", "1",
                         "-b:v", "96k", str(output_3gp)
                     ], check=True)
                 success = True
