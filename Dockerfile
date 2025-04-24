@@ -1,32 +1,29 @@
 FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    wget build-essential pkg-config \
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    wget curl git build-essential python3-dev \
     libx264-dev libx265-dev libvpx-dev \
-    libmp3lame-dev libopus-dev \
-    libvorbis-dev libass-dev libfreetype6-dev \
-    libssl-dev yasm libtool \
-    zlib1g-dev git curl ffmpeg \
+    libmp3lame-dev libopus-dev libass-dev \
+    libfreetype6-dev libvorbis-dev yasm pkg-config \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Set workdir
+# Create working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker caching
+# Copy requirements and install Python packages
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app source
+# Copy the rest of the app
 COPY . .
 
-# Set environment variables (if needed)
-ENV PYTHONUNBUFFERED=1
+# Create persistent tmp dir (Koyeb uses /mnt/data)
+RUN mkdir -p /mnt/data/ytmp3
 
-# Expose port if needed (e.g., 5000 for Flask)
-EXPOSE 5000
+# Expose Flask port
+EXPOSE 8000
 
-# Command to run your Flask app
+# Run the app
 CMD ["python", "app.py"]
