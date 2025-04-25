@@ -2,6 +2,8 @@ import os
 import time
 import logging
 import subprocess
+import threading
+import shutil
 from flask import Flask, request, Response, redirect
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -10,17 +12,21 @@ import json
 from unidecode import unidecode
 
 app = Flask(__name__)
-TMP_DIR = Path("/mnt/data/ytmp3")
-TMP_DIR.mkdir(exist_ok=True)
+BASE_TMP = Path("/mnt/data/ytmp3")
+BASE_TMP.mkdir(exist_ok=True)
 
-TITLE_CACHE = TMP_DIR / "title_cache.json"
+TITLE_CACHE = BASE_TMP / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
-
 logging.basicConfig(level=logging.DEBUG)
+
+def user_dir(ip):
+    d = BASE_TMP / ip.replace(".", "_")
+    d.mkdir(exist_ok=True)
+    return d
 
 def save_title(video_id, title):
     try:
@@ -37,7 +43,8 @@ def load_title(video_id):
     except Exception:
         return video_id
 
-def get_unique_video_ids():
+def get_unique_video_ids(user_ip):
+    TMP_DIR = user_dir(user_ip)
     files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4")) + list(TMP_DIR.glob("*.3gp"))
     unique_ids = {}
     for file in files:
@@ -52,12 +59,13 @@ def safe_filename(name):
 
 @app.route("/")
 def index():
+    ip = request.remote_addr
     search_html = """<form method='get' action='/search'>
     <input type='text' name='q' placeholder='Search YouTube...'>
     <input type='submit' value='Search'></form><br>"""
 
     cached_html = "<h3>Cached Files</h3>"
-    for video_id, file in get_unique_video_ids().items():
+    for video_id, file in get_unique_video_ids(ip).items():
         ext = file.suffix.lstrip(".")
         title = load_title(video_id)
         cached_html += f"""
@@ -133,6 +141,9 @@ def download():
     if not video_id:
         return "Missing video ID", 400
 
+    ip = request.remote_addr
+    TMP_DIR = user_dir(ip)
+
     title = safe_filename(load_title(video_id))
     ext = fmt
     filename = f"{video_id}_{title}.{ext}"
@@ -145,11 +156,8 @@ def download():
             return "Cookies file not found", 400
 
         base_cmd = [
-            "yt-dlp",
-            "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
-            "--user-agent", FIXED_USER_AGENT,
-            "--cookies", cookies_path,
-            url
+            "yt-dlp", "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
+            "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
         ]
 
         if fmt == "mp3":
@@ -170,50 +178,52 @@ def download():
             try:
                 subprocess.run(intermediate_cmd, check=True)
                 ffmpeg_cmd = [
-    "ffmpeg", "-y", "-i", str(temp_mp4),
-    "-vf", "scale=176:144", "-r", "15",
-    "-c:v", "h263", "-b:v", "384k",
-    "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "12k",
-    str(file_path)
-]
+                    "ffmpeg", "-y", "-i", str(temp_mp4),
+                    "-vf", "scale=176:144", "-r", "15",
+                    "-c:v", "h263", "-b:v", "384k",
+                    "-c:a", "amr_wb", "-ar", "22050", "-ac", "1", "-b:a", "12k",
+                    str(file_path)
+                ]
                 subprocess.run(ffmpeg_cmd, check=True)
                 temp_mp4.unlink(missing_ok=True)
             except Exception as e:
                 logging.error(f"3GP conversion failed: {e}")
                 return "3GP conversion failed", 500
-            else:
-                if not file_path.exists():
-                    return "3GP file missing after conversion", 500
+            if not file_path.exists():
+                return "3GP file missing after conversion", 500
         else:
             return "Invalid format", 400
 
         if fmt in ["mp3", "mp4"]:
-            success = False
             for attempt in range(3):
                 try:
-                    logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
                     subprocess.run(cmd, check=True)
-                    success = True
                     break
-                except subprocess.CalledProcessError as e:
-                    logging.warning(f"Attempt {attempt + 1} failed: {e}")
+                except subprocess.CalledProcessError:
                     time.sleep(10)
-            if not success or not file_path.exists():
+            if not file_path.exists():
                 return "Download failed after retries", 500
 
     def generate():
         with open(file_path, "rb") as f:
             yield from f
 
-    mimetype = {
-        "mp3": "audio/mpeg",
-        "mp4": "video/mp4",
-        "3gp": "video/3gpp"
-    }.get(fmt, "application/octet-stream")
-
+    mimetype = {"mp3": "audio/mpeg", "mp4": "video/mp4", "3gp": "video/3gpp"}.get(fmt, "application/octet-stream")
     return Response(generate(), mimetype=mimetype, headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
+
+def cleanup_loop():
+    while True:
+        now = time.time()
+        for user_dir in BASE_TMP.glob("*"):
+            if user_dir.is_dir():
+                for f in user_dir.glob("*"):
+                    if f.is_file() and f.stat().st_mtime < now - 3600:
+                        f.unlink(missing_ok=True)
+        time.sleep(1800)  # cleanup every 30 mins
+
+threading.Thread(target=cleanup_loop, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
