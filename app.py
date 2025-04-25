@@ -20,14 +20,15 @@ if not TITLE_CACHE.exists():
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
-CHANNELS = {
-    "maheen": "https://youtube.com/@hitchhikingnomaad/videos",
-    "entri": "https://youtube.com/@entriapp/videos",
-    "zamzam": "https://youtube.com/@zamzamacademy/videos",
-    "jrstudio": "https://youtube.com/@jrstudiomalayalam/videos",
-}
-
 logging.basicConfig(level=logging.DEBUG)
+
+# Predefined channels
+CHANNELS = {
+    "maheen": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCvKzh_fqEqvcgQbEha3ySfg&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
+    "entri": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UC_vcKmg67vjMP7ciLnSxXwQ&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
+    "zamzam": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCkmK9E_eezv8bChq-jwqj8w&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
+    "jrstudio": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCy-N3RGd_eT4l4dpA6pgHcQ&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
+}
 
 def save_title(video_id, title):
     try:
@@ -45,16 +46,8 @@ def load_title(video_id):
         return video_id
 
 def get_unique_video_ids():
-    # Preload videos from predefined channels
-    unique_ids = {}
-    
-    # Add videos from CHANNELS
-    for channel, url in CHANNELS.items():
-        video_id = channel  # Use the channel name as the ID
-        unique_ids[video_id] = None  # No file associated yet, will be generated during download
-
-    # Add files already cached (MP3 or MP4)
     files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
+    unique_ids = {}
     for file in files:
         vid = file.stem.split("_")[0]
         if vid not in unique_ids:
@@ -73,6 +66,7 @@ def index():
 
     cached_html = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
+        ext = file.suffix.lstrip(".")
         title = load_title(video_id)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
@@ -82,7 +76,28 @@ def index():
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
         """
-    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
+
+    # Fetch and display latest videos for predefined channels
+    latest_html = "<h3>Latest Videos</h3>"
+    for channel_name, api_url in CHANNELS.items():
+        r = requests.get(api_url)
+        data = r.json()
+
+        if 'items' in data:
+            for item in data['items']:
+                video_id = item['id']['videoId']
+                title = item['snippet']['title']
+                thumbnail_url = item['snippet']['thumbnails']['medium']['url']
+                save_title(video_id, title)
+                latest_html += f"""
+                <div style='margin-bottom:10px; font-size:small;'>
+                    <img src='{thumbnail_url}' width='120' height='90'><br>
+                    <b>{title}</b><br>
+                    <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
+                    <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
+                </div>
+                """
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}{latest_html}</body></html>"
 
 @app.route("/search")
 def search():
