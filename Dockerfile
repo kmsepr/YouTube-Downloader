@@ -17,9 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your application code to the container
 COPY . /app
 
-# Set environment variables (ensure YOUTUBE_API_KEY is set in your environment or Docker)
-ENV YOUTUBE_API_KEY=your_api_key_here
-
 # Expose port 8000
 EXPOSE 8000
 
