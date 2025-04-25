@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import subprocess
+import threading
 from flask import Flask, request, Response, redirect
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -47,7 +48,7 @@ def get_unique_video_ids():
     return unique_ids
 
 def safe_filename(name):
-    name = unidecode(name)  # Transliterates Unicode to ASCII
+    name = unidecode(name)
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
 @app.route("/")
@@ -183,6 +184,22 @@ def download():
     return Response(generate(), mimetype=mimetype, headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
+
+# Background thread to clean old files
+def cleanup_old_files(interval_minutes=10, max_age_seconds=3600):
+    while True:
+        now = time.time()
+        for file in TMP_DIR.glob("*.*"):
+            if file.is_file() and now - file.stat().st_mtime > max_age_seconds:
+                try:
+                    file.unlink()
+                    logging.info(f"Deleted old file: {file}")
+                except Exception as e:
+                    logging.warning(f"Failed to delete {file}: {e}")
+        time.sleep(interval_minutes * 60)
+
+# Start the cleanup thread
+threading.Thread(target=cleanup_old_files, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
