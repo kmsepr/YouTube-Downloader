@@ -170,12 +170,12 @@ def download():
             try:
                 subprocess.run(intermediate_cmd, check=True)
                 ffmpeg_cmd = [
-                    "ffmpeg", "-y", "-i", str(temp_mp4),
-                    "-vf", "scale=320:240", "-r", "15",
-                    "-c:v", "h263", "-b:v", "384k",
-                    "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "12k",
-                    str(file_path)
-                ]
+    "ffmpeg", "-y", "-i", str(temp_mp4),
+    "-vf", "scale=176:144", "-r", "15",
+    "-c:v", "h263", "-b:v", "384k",
+    "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "12k",
+    str(file_path)
+]
                 subprocess.run(ffmpeg_cmd, check=True)
                 temp_mp4.unlink(missing_ok=True)
             except Exception as e:
