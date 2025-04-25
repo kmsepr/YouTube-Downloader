@@ -10,20 +10,26 @@ from unidecode import unidecode
 app = Flask(__name__)
 app.secret_key = "random_secret_key"  # Needed for session
 
+# Temporary directory for saving files
 TMP_DIR = Path("/mnt/data/ytmp3")
 TMP_DIR.mkdir(exist_ok=True)
 
+# Cache file for video titles
 TITLE_CACHE = TMP_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
+# Environment variable for YouTube API key
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 
+# Sanitize filenames by removing non-ASCII characters
 def safe_filename(name):
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in unidecode(name))
 
+# Save video title to cache
 def save_title(video_id, title):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
@@ -32,6 +38,7 @@ def save_title(video_id, title):
     cache[video_id] = title
     TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
+# Load video title from cache
 def load_title(video_id):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
@@ -39,6 +46,7 @@ def load_title(video_id):
     except:
         return video_id
 
+# Get unique video files from the cache directory
 def get_unique_video_ids():
     files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
     unique_ids = {}
@@ -48,6 +56,7 @@ def get_unique_video_ids():
             unique_ids[vid] = file
     return unique_ids
 
+# Fetch related videos using YouTube API
 def fetch_related_videos(query):
     url = "https://www.googleapis.com/youtube/v3/search"
     params = {
