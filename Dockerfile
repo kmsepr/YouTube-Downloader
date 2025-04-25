@@ -41,11 +41,14 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-4.4.5.tar.gz -O /tmp/ffmpeg.tar.gz \
     && make install \
     && rm -rf /tmp/ffmpeg.tar.gz /usr/src/ffmpeg-4.4.5
 
-# Install Flask and other Python dependencies
-RUN pip3 install flask yt-dlp
-
-# Set working directory for your Flask app
+# Set the working directory for your Flask app
 WORKDIR /app
+
+# Copy the requirements.txt into the container
+COPY requirements.txt /app/
+
+# Install dependencies from requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy your Flask app into the container
 COPY app.py /app
