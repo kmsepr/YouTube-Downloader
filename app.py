@@ -1,4 +1,5 @@
 import os
+import time
 import re
 import threading
 import shutil
@@ -14,9 +15,11 @@ DATA_DIR = "/mnt/data/ytmp3"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 YDL_OPTIONS = {
-    "format": "best[ext=mp4]",
+    "format": "bv*[height<=240][ext=mp4]+ba[ext=m4a]/b[height<=240][ext=mp4]/best[ext=mp4]/best",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "cookiefile": "/mnt/data/cookies.txt"
+    "cookiefile": "/mnt/data/cookies.txt",
+    "merge_output_format": "mp4",
+    "quiet": True,
 }
 
 HTML_TEMPLATE = """
