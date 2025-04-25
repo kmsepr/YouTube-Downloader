@@ -1,12 +1,10 @@
 import os
-import time
 import logging
-import subprocess
-from flask import Flask, request, Response, redirect
-from pathlib import Path
-from urllib.parse import quote_plus
 import requests
 import json
+from flask import Flask, request, Response, redirect
+from urllib.parse import quote_plus
+from pathlib import Path
 from unidecode import unidecode
 
 app = Flask(__name__)
@@ -22,12 +20,32 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
-# Predefined channels
+# Define your predefined channels here
 CHANNELS = {
-    "maheen": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCvKzh_fqEqvcgQbEha3ySfg&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
-    "entri": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UC_vcKmg67vjMP7ciLnSxXwQ&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
-    "zamzam": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCkmK9E_eezv8bChq-jwqj8w&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
-    "jrstudio": "https://www.googleapis.com/youtube/v3/search?key={}&channelId=UCy-N3RGd_eT4l4dpA6pgHcQ&part=snippet&type=video&order=date&maxResults=5".format(YOUTUBE_API_KEY),
+    "maheen": "https://youtube.com/@hitchhikingnomaad/videos",
+    "entri": "https://youtube.com/@entriapp/videos",
+    "zamzam": "https://youtube.com/@zamzamacademy/videos",
+    "jrstudio": "https://youtube.com/@jrstudiomalayalam/videos",
+    "raftalks": "https://youtube.com/@raftalksmalayalam/videos",
+    "parvinder": "https://www.youtube.com/@pravindersheoran/videos",
+    "qasimi": "https://www.youtube.com/@quranstudycentremukkam/videos",
+    "sharique": "https://youtube.com/@shariquesamsudheen/videos",
+    "drali": "https://youtube.com/@draligomaa/videos",
+    "yaqeen": "https://youtube.com/@yaqeeninstituteofficial/videos",
+    "talent": "https://youtube.com/@talentacademyonline/videos",
+    "vijayakumarblathur": "https://youtube.com/@vijayakumarblathur/videos",
+    "entridegree": "https://youtube.com/@entridegreelevelexams/videos",
+    "suprabhatam": "https://youtube.com/@suprabhaatham2023/videos",
+    "bayyinah": "https://youtube.com/@bayyinah/videos",
+    "vallathorukatha": "https://www.youtube.com/@babu_ramachandran/videos",
+    "furqan": "https://youtube.com/@alfurqan4991/videos",
+    "skicr": "https://youtube.com/@skicrtv/videos",
+    "dhruvrathee": "https://youtube.com/@dhruvrathee/videos",
+    "safari": "https://youtube.com/@safaritvlive/videos",
+    "sunnxt": "https://youtube.com/@sunnxtmalayalam/videos",
+    "movieworld": "https://youtube.com/@movieworldmalayalammovies/videos",
+    "comedy": "https://youtube.com/@malayalamcomedyscene5334/videos",
+    "studyiq": "https://youtube.com/@studyiqiasenglish/videos",
 }
 
 def save_title(video_id, title):
@@ -58,6 +76,27 @@ def safe_filename(name):
     name = unidecode(name)  # Transliterates Unicode to ASCII
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
+def get_latest_video(channel_url):
+    channel_id = channel_url.split('@')[-1].split('/')[0]
+    url = f"https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "channelId": channel_id,
+        "order": "date",
+        "part": "snippet",
+        "maxResults": 1
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    if "items" in data:
+        latest_video = data["items"][0]
+        video_id = latest_video["id"]["videoId"]
+        title = latest_video["snippet"]["title"]
+        thumbnail_url = latest_video["snippet"]["thumbnails"]["high"]["url"]
+        return video_id, title, thumbnail_url
+    return None, None, None
+
 @app.route("/")
 def index():
     search_html = """<form method='get' action='/search'>
@@ -77,27 +116,22 @@ def index():
         </div>
         """
 
-    # Fetch and display latest videos for predefined channels
-    latest_html = "<h3>Latest Videos</h3>"
-    for channel_name, api_url in CHANNELS.items():
-        r = requests.get(api_url)
-        data = r.json()
+    # Add predefined channels to the homepage with their latest video and thumbnail
+    channels_html = "<h3>Predefined Channels</h3>"
+    for channel_name, channel_url in CHANNELS.items():
+        video_id, title, thumbnail_url = get_latest_video(channel_url)
+        if video_id:
+            channels_html += f"""
+            <div style='margin-bottom:10px; font-size:small;'>
+                <b>{channel_name}</b><br>
+                <img src='{thumbnail_url}' width='120' height='90'><br>
+                <b>{title}</b><br>
+                <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
+                <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
+            </div>
+            """
 
-        if 'items' in data:
-            for item in data['items']:
-                video_id = item['id']['videoId']
-                title = item['snippet']['title']
-                thumbnail_url = item['snippet']['thumbnails']['medium']['url']
-                save_title(video_id, title)
-                latest_html += f"""
-                <div style='margin-bottom:10px; font-size:small;'>
-                    <img src='{thumbnail_url}' width='120' height='90'><br>
-                    <b>{title}</b><br>
-                    <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
-                    <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
-                </div>
-                """
-    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}{latest_html}</body></html>"
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}{channels_html}</body></html>"
 
 @app.route("/search")
 def search():
@@ -172,46 +206,12 @@ def download():
             return "Cookies file not found", 400
 
         base_cmd = [
-            "yt-dlp",
-            "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
-            "--user-agent", FIXED_USER_AGENT,
-            "--cookies", cookies_path,
-            url
+            "yt-dlp", url, "-f", "bestaudio[ext=m4a]+bestaudio/best", "--merge-output-format", ext,
+            "--output", str(file_path)
         ]
+        subprocess.run(base_cmd, check=True)
 
-        if fmt == "mp3":
-            cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
-                "--extract-audio", "--audio-format", "mp3"
-            ]
-        else:
-            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
-                "--recode-video", "mp4",
-                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-            ]
-
-        success = False
-        for attempt in range(3):
-            try:
-                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
-                subprocess.run(cmd, check=True)
-                success = True
-                break
-            except subprocess.CalledProcessError as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}")
-                time.sleep(10)
-
-        if not success or not file_path.exists():
-            return "Download failed after retries", 500
-
-    def generate():
-        with open(file_path, "rb") as f:
-            yield from f
-
-    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
-    return Response(generate(), mimetype=mimetype, headers={
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    })
+    return Response(file_path.read_bytes(), mimetype=f"audio/{ext}" if ext == "mp3" else f"video/{ext}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
