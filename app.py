@@ -20,6 +20,13 @@ if not TITLE_CACHE.exists():
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
+CHANNELS = {
+    "maheen": "https://youtube.com/@hitchhikingnomaad/videos",
+    "entri": "https://youtube.com/@entriapp/videos",
+    "zamzam": "https://youtube.com/@zamzamacademy/videos",
+    "jrstudio": "https://youtube.com/@jrstudiomalayalam/videos",
+}
+
 logging.basicConfig(level=logging.DEBUG)
 
 def save_title(video_id, title):
@@ -38,8 +45,16 @@ def load_title(video_id):
         return video_id
 
 def get_unique_video_ids():
-    files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
+    # Preload videos from predefined channels
     unique_ids = {}
+    
+    # Add videos from CHANNELS
+    for channel, url in CHANNELS.items():
+        video_id = channel  # Use the channel name as the ID
+        unique_ids[video_id] = None  # No file associated yet, will be generated during download
+
+    # Add files already cached (MP3 or MP4)
+    files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
     for file in files:
         vid = file.stem.split("_")[0]
         if vid not in unique_ids:
@@ -58,7 +73,6 @@ def index():
 
     cached_html = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
-        ext = file.suffix.lstrip(".")
         title = load_title(video_id)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
