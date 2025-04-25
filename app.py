@@ -23,13 +23,6 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
-def get_ip_based_cache_dir():
-    ip = request.remote_addr
-    ip_safe = ip.replace(".", "_")  # Replace dots with underscores for folder name
-    ip_cache_dir = BASE_DIR / ip_safe
-    ip_cache_dir.mkdir(parents=True, exist_ok=True)
-    return ip_cache_dir
-
 def save_title(video_id, title, cache_dir):
     try:
         cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
@@ -45,8 +38,8 @@ def load_title(video_id, cache_dir):
     except Exception:
         return video_id
 
-def get_unique_video_ids(cache_dir):
-    files = list(cache_dir.glob("*.mp3")) + list(cache_dir.glob("*.mp4"))
+def get_unique_video_ids():
+    files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4"))
     unique_ids = {}
     for file in files:
         vid = file.stem.split("_")[0]
@@ -72,11 +65,10 @@ def index():
     <input type='text' name='q' placeholder='Search YouTube...'>
     <input type='submit' value='Search'></form><br>"""
 
-    ip_cache_dir = get_ip_based_cache_dir()
     cached_html = "<h3>Cached Files</h3>"
-    for video_id, file in get_unique_video_ids(ip_cache_dir).items():
+    for video_id, file in get_unique_video_ids().items():
         ext = file.suffix.lstrip(".")
-        title = load_title(video_id, ip_cache_dir)
+        title = load_title(video_id, BASE_DIR)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -105,7 +97,7 @@ def index():
             for item in results:
                 vid = item["id"]["videoId"]
                 title = item["snippet"]["title"]
-                save_title(vid, title, ip_cache_dir)
+                save_title(vid, title, BASE_DIR)
                 related_html += f"""
                 <div style='margin-bottom:10px; font-size:small;'>
                     <img src='/thumb/{vid}' width='120' height='90'><br>
@@ -138,8 +130,6 @@ def search():
     r = requests.get(url, params=params)
     results = r.json().get("items", [])
 
-    ip_cache_dir = get_ip_based_cache_dir()
-
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
     <body style='font-family:sans-serif;'>
@@ -152,7 +142,7 @@ def search():
     for item in results:
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
-        save_title(video_id, title, ip_cache_dir)
+        save_title(video_id, title, BASE_DIR)
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -188,11 +178,10 @@ def download():
     if not video_id:
         return "Missing video ID", 400
 
-    ip_cache_dir = get_ip_based_cache_dir()
-    title = safe_filename(load_title(video_id, ip_cache_dir))
+    title = safe_filename(load_title(video_id, BASE_DIR))
     ext = "mp3" if fmt == "mp3" else "mp4"
     filename = f"{video_id}_{title}.{ext}"
-    file_path = ip_cache_dir / filename
+    file_path = BASE_DIR / filename
 
     if not file_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -202,7 +191,7 @@ def download():
 
         base_cmd = [
             "yt-dlp",
-            "--output", str(ip_cache_dir / f"{video_id}_{title}.%(ext)s"),
+            "--output", str(BASE_DIR / f"{video_id}_{title}.%(ext)s"),
             "--user-agent", FIXED_USER_AGENT,
             "--cookies", cookies_path,
             url
