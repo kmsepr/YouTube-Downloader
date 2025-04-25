@@ -22,8 +22,6 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
-last_video_id = None  # Tracks the last searched or downloaded video
-
 def save_title(video_id, title):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
@@ -52,27 +50,8 @@ def safe_filename(name):
     name = unidecode(name)  # Transliterates Unicode to ASCII
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
-def get_related_videos(video_id):
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "key": YOUTUBE_API_KEY,
-        "part": "snippet",
-        "type": "video",
-        "relatedToVideoId": video_id,
-        "maxResults": 5
-    }
-    try:
-        r = requests.get(url, params=params)
-        r.raise_for_status()
-        return r.json().get("items", [])
-    except Exception as e:
-        logging.warning(f"Failed to get related videos: {e}")
-        return []
-
 @app.route("/")
 def index():
-    global last_video_id
-
     search_html = """<form method='get' action='/search'>
     <input type='text' name='q' placeholder='Search YouTube...'>
     <input type='submit' value='Search'></form><br>"""
@@ -89,30 +68,10 @@ def index():
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
         """
-
-    related_html = ""
-    if last_video_id:
-        related_html += "<h3>Related Videos</h3>"
-        for item in get_related_videos(last_video_id):
-            vid = item["id"]["videoId"]
-            title = item["snippet"]["title"]
-            thumb = item["snippet"]["thumbnails"]["medium"]["url"]
-            save_title(vid, title)
-            related_html += f"""
-            <div style='margin-bottom:10px; font-size:small;'>
-                <img src='{thumb}' width='120' height='90'><br>
-                <b>{title}</b><br>
-                <a href='/download?q={vid}&fmt=mp3'>Download MP3</a> |
-                <a href='/download?q={vid}&fmt=mp4'>Download MP4</a>
-            </div>
-            """
-
-    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}{related_html}</body></html>"
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
 
 @app.route("/search")
 def search():
-    global last_video_id
-
     query = request.args.get("q", "").strip()
     if not query:
         return redirect("/")
@@ -142,7 +101,6 @@ def search():
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         save_title(video_id, title)
-        last_video_id = video_id
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -168,14 +126,10 @@ def thumbnail_proxy(video_id):
 
 @app.route("/download")
 def download():
-    global last_video_id
-
     video_id = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
     if not video_id:
         return "Missing video ID", 400
-
-    last_video_id = video_id
 
     title = safe_filename(load_title(video_id))
     ext = "mp3" if fmt == "mp3" else "mp4"
