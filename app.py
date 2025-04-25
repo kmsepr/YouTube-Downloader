@@ -1,14 +1,15 @@
 import os
-import time
-import logging
-import subprocess
-from flask import Flask, request, Response, redirect
-from pathlib import Path
-from urllib.parse import quote_plus
 import json
+import requests
+import logging
+from flask import Flask, request, redirect, Response, session
+from urllib.parse import quote_plus
+from pathlib import Path
 from unidecode import unidecode
 
 app = Flask(__name__)
+app.secret_key = "random_secret_key"  # Needed for session
+
 TMP_DIR = Path("/mnt/data/ytmp3")
 TMP_DIR.mkdir(exist_ok=True)
 
@@ -16,14 +17,17 @@ TITLE_CACHE = TMP_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
-FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
+
+def safe_filename(name):
+    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in unidecode(name))
 
 def save_title(video_id, title):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
-    except Exception:
+    except:
         cache = {}
     cache[video_id] = title
     TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
@@ -32,7 +36,7 @@ def load_title(video_id):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
         return cache.get(video_id, video_id)
-    except Exception:
+    except:
         return video_id
 
 def get_unique_video_ids():
@@ -44,9 +48,17 @@ def get_unique_video_ids():
             unique_ids[vid] = file
     return unique_ids
 
-def safe_filename(name):
-    name = unidecode(name)
-    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
+def fetch_related_videos(query):
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "q": query,
+        "part": "snippet",
+        "type": "video",
+        "maxResults": 6
+    }
+    r = requests.get(url, params=params)
+    return r.json().get("items", [])
 
 @app.route("/")
 def index():
@@ -54,9 +66,8 @@ def index():
     <input type='text' name='q' placeholder='Search YouTube...'>
     <input type='submit' value='Search'></form><br>"""
 
-    cached_html = "<h3>Cached Files</h3>"
+    cached_html = "<h3>Cached Downloads</h3>"
     for video_id, file in get_unique_video_ids().items():
-        ext = file.suffix.lstrip(".")
         title = load_title(video_id)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
@@ -66,25 +77,36 @@ def index():
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
         """
-    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
+
+    # Show related videos if a search was recently done
+    related_html = ""
+    query = session.get("last_query", "")
+    if query:
+        related_html = "<h3>Related Videos</h3>"
+        for item in fetch_related_videos(query):
+            vid = item["id"]["videoId"]
+            title = item["snippet"]["title"]
+            thumb = item["snippet"]["thumbnails"]["medium"]["url"]
+            save_title(vid, title)
+            related_html += f"""
+            <div style='margin-bottom:10px; font-size:small;'>
+                <img src='{thumb}' width='120' height='90'><br>
+                <b>{title}</b><br>
+                <a href='/download?q={vid}&fmt=mp3'>Download MP3</a> |
+                <a href='/download?q={vid}&fmt=mp4'>Download MP4</a>
+            </div>
+            """
+
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}{related_html}</body></html>"
 
 @app.route("/search")
 def search():
     query = request.args.get("q", "").strip()
     if not query:
         return redirect("/")
+    session["last_query"] = query
 
-    cmd = [
-        "yt-dlp", f"ytsearch5:{query}",
-        "--skip-download",
-        "--print", "%(title)s|%(id)s"
-    ]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        lines = result.stdout.strip().splitlines()
-    except subprocess.CalledProcessError as e:
-        return f"<b>Error:</b> {e.stderr}"
+    results = fetch_related_videos(query)
 
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
@@ -95,17 +117,17 @@ def search():
     </form><br><h3>Search results for '{query}'</h3>
     """
 
-    for line in lines:
-        if "|" not in line:
-            continue
-        title, video_id = line.split("|", 1)
+    for item in results:
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        thumb = item["snippet"]["thumbnails"]["medium"]["url"]
         save_title(video_id, title)
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
-            <img src='/thumb/{video_id}' width='120' height='90'><br>
+            <img src='{thumb}' width='120' height='90'><br>
             <b>{title}</b><br>
-            <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
+            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
+            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
         """
     html += "</body></html>"
@@ -115,17 +137,17 @@ def search():
 def thumbnail_proxy(video_id):
     url = f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
     try:
-        import requests
-        r = requests.get(url, headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        r = requests.get(url, timeout=5)
         if r.status_code == 200:
             return Response(r.content, mimetype="image/jpeg")
-        else:
-            return "Thumbnail not found", 404
-    except Exception:
-        return "Error fetching thumbnail", 500
+    except:
+        pass
+    return "Thumbnail not found", 404
 
 @app.route("/download")
 def download():
+    import subprocess
+
     video_id = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
     if not video_id:
@@ -138,46 +160,13 @@ def download():
 
     if not file_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
-        base_cmd = [
-            "yt-dlp",
-            "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
-            "--user-agent", FIXED_USER_AGENT,
-            url
-        ]
+        subprocess.run([
+            "yt-dlp", "-f", "bestaudio/best", "--extract-audio" if ext == "mp3" else "",
+            "--audio-format", ext if ext == "mp3" else "",
+            "-o", str(file_path), url
+        ], check=True)
 
-        if fmt == "mp3":
-            cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
-                "--extract-audio", "--audio-format", "mp3"
-            ]
-        else:
-            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
-                "--recode-video", "mp4",
-                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-            ]
-
-        success = False
-        for attempt in range(3):
-            try:
-                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
-                subprocess.run(cmd, check=True)
-                success = True
-                break
-            except subprocess.CalledProcessError as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}")
-                time.sleep(10)
-
-        if not success or not file_path.exists():
-            return "Download failed after retries", 500
-
-    def generate():
-        with open(file_path, "rb") as f:
-            yield from f
-
-    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
-    return Response(generate(), mimetype=mimetype, headers={
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    })
+    return Response(file_path.read_bytes(), mimetype=f"audio/{ext}" if ext == "mp3" else f"video/{ext}")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(host="0.0.0.0", port=5000)
