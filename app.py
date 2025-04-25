@@ -5,7 +5,6 @@ import subprocess
 from flask import Flask, request, Response, redirect
 from pathlib import Path
 from urllib.parse import quote_plus
-import requests
 import json
 from unidecode import unidecode
 
@@ -18,7 +17,6 @@ if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -47,7 +45,7 @@ def get_unique_video_ids():
     return unique_ids
 
 def safe_filename(name):
-    name = unidecode(name)  # Transliterates Unicode to ASCII
+    name = unidecode(name)
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
 @app.route("/")
@@ -76,17 +74,17 @@ def search():
     if not query:
         return redirect("/")
 
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "key": YOUTUBE_API_KEY,
-        "q": query,
-        "part": "snippet",
-        "type": "video",
-        "maxResults": 5
-    }
+    cmd = [
+        "yt-dlp", f"ytsearch5:{query}",
+        "--skip-download",
+        "--print", "%(title)s|%(id)s"
+    ]
 
-    r = requests.get(url, params=params)
-    results = r.json().get("items", [])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        lines = result.stdout.strip().splitlines()
+    except subprocess.CalledProcessError as e:
+        return f"<b>Error:</b> {e.stderr}"
 
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
@@ -97,9 +95,10 @@ def search():
     </form><br><h3>Search results for '{query}'</h3>
     """
 
-    for item in results:
-        video_id = item["id"]["videoId"]
-        title = item["snippet"]["title"]
+    for line in lines:
+        if "|" not in line:
+            continue
+        title, video_id = line.split("|", 1)
         save_title(video_id, title)
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
@@ -116,6 +115,7 @@ def search():
 def thumbnail_proxy(video_id):
     url = f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
     try:
+        import requests
         r = requests.get(url, headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
         if r.status_code == 200:
             return Response(r.content, mimetype="image/jpeg")
@@ -138,15 +138,10 @@ def download():
 
     if not file_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
-        cookies_path = "/mnt/data/cookies.txt"
-        if not Path(cookies_path).exists():
-            return "Cookies file not found", 400
-
         base_cmd = [
             "yt-dlp",
             "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
             "--user-agent", FIXED_USER_AGENT,
-            "--cookies", cookies_path,
             url
         ]
 
