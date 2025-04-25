@@ -2,7 +2,6 @@ import os
 import time
 import logging
 import subprocess
-import threading
 from flask import Flask, request, Response, redirect
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -18,6 +17,7 @@ TITLE_CACHE = TMP_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
+LAST_VIDEO_FILE = TMP_DIR / "last_video.txt"
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
@@ -48,8 +48,16 @@ def get_unique_video_ids():
     return unique_ids
 
 def safe_filename(name):
-    name = unidecode(name)
+    name = unidecode(name)  # Transliterates Unicode to ASCII
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
+
+def set_last_video(video_id):
+    LAST_VIDEO_FILE.write_text(video_id)
+
+def get_last_video():
+    if LAST_VIDEO_FILE.exists():
+        return LAST_VIDEO_FILE.read_text().strip()
+    return None
 
 @app.route("/")
 def index():
@@ -69,6 +77,39 @@ def index():
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
         """
+
+    # Fetch related videos if any previous video is available
+    last_video = get_last_video()
+    if last_video:
+        try:
+            url = "https://www.googleapis.com/youtube/v3/search"
+            params = {
+                "key": YOUTUBE_API_KEY,
+                "relatedToVideoId": last_video,
+                "type": "video",
+                "part": "snippet",
+                "maxResults": 5
+            }
+            r = requests.get(url, params=params)
+            results = r.json().get("items", [])
+
+            related_html = "<h3>Related to Your Last Search</h3>"
+            for item in results:
+                vid = item["id"]["videoId"]
+                title = item["snippet"]["title"]
+                save_title(vid, title)
+                related_html += f"""
+                <div style='margin-bottom:10px; font-size:small;'>
+                    <img src='/thumb/{vid}' width='120' height='90'><br>
+                    <b>{title}</b><br>
+                    <a href='/download?q={vid}&fmt=mp3'>Download MP3</a> |
+                    <a href='/download?q={vid}&fmt=mp4'>Download MP4</a>
+                </div>
+                """
+            cached_html += related_html
+        except Exception as e:
+            logging.warning(f"Failed to load related videos: {e}")
+
     return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
 
 @app.route("/search")
@@ -110,6 +151,11 @@ def search():
             <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
         </div>
         """
+    
+    # Set the last video for future reference
+    if results:
+        set_last_video(results[0]["id"]["videoId"])
+
     html += "</body></html>"
     return html
 
@@ -184,22 +230,6 @@ def download():
     return Response(generate(), mimetype=mimetype, headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
-
-# Background thread to clean old files
-def cleanup_old_files(interval_minutes=10, max_age_seconds=3600):
-    while True:
-        now = time.time()
-        for file in TMP_DIR.glob("*.*"):
-            if file.is_file() and now - file.stat().st_mtime > max_age_seconds:
-                try:
-                    file.unlink()
-                    logging.info(f"Deleted old file: {file}")
-                except Exception as e:
-                    logging.warning(f"Failed to delete {file}: {e}")
-        time.sleep(interval_minutes * 60)
-
-# Start the cleanup thread
-threading.Thread(target=cleanup_old_files, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
