@@ -10,36 +10,43 @@ import json
 from unidecode import unidecode
 
 app = Flask(__name__)
-TMP_DIR = Path("/mnt/data/ytmp3")
-TMP_DIR.mkdir(exist_ok=True)
+BASE_DIR = Path("/mnt/data/ytmp3")
+BASE_DIR.mkdir(exist_ok=True)
 
-TITLE_CACHE = TMP_DIR / "title_cache.json"
+TITLE_CACHE = BASE_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
-LAST_VIDEO_FILE = TMP_DIR / "last_video.txt"
+LAST_VIDEO_FILE = BASE_DIR / "last_video.txt"
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
-def save_title(video_id, title):
+def get_ip_based_cache_dir():
+    ip = request.remote_addr
+    ip_safe = ip.replace(".", "_")  # Replace dots with underscores for folder name
+    ip_cache_dir = BASE_DIR / ip_safe
+    ip_cache_dir.mkdir(parents=True, exist_ok=True)
+    return ip_cache_dir
+
+def save_title(video_id, title, cache_dir):
     try:
-        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
+        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
     except Exception:
         cache = {}
     cache[video_id] = title
-    TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    (cache_dir / "title_cache.json").write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
-def load_title(video_id):
+def load_title(video_id, cache_dir):
     try:
-        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
+        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
         return cache.get(video_id, video_id)
     except Exception:
         return video_id
 
-def get_unique_video_ids():
-    files = list(TMP_DIR.glob("*.mp3")) + list(TMP_DIR.glob("*.mp4"))
+def get_unique_video_ids(cache_dir):
+    files = list(cache_dir.glob("*.mp3")) + list(cache_dir.glob("*.mp4"))
     unique_ids = {}
     for file in files:
         vid = file.stem.split("_")[0]
@@ -65,10 +72,11 @@ def index():
     <input type='text' name='q' placeholder='Search YouTube...'>
     <input type='submit' value='Search'></form><br>"""
 
+    ip_cache_dir = get_ip_based_cache_dir()
     cached_html = "<h3>Cached Files</h3>"
-    for video_id, file in get_unique_video_ids().items():
+    for video_id, file in get_unique_video_ids(ip_cache_dir).items():
         ext = file.suffix.lstrip(".")
-        title = load_title(video_id)
+        title = load_title(video_id, ip_cache_dir)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -97,7 +105,7 @@ def index():
             for item in results:
                 vid = item["id"]["videoId"]
                 title = item["snippet"]["title"]
-                save_title(vid, title)
+                save_title(vid, title, ip_cache_dir)
                 related_html += f"""
                 <div style='margin-bottom:10px; font-size:small;'>
                     <img src='/thumb/{vid}' width='120' height='90'><br>
@@ -130,6 +138,8 @@ def search():
     r = requests.get(url, params=params)
     results = r.json().get("items", [])
 
+    ip_cache_dir = get_ip_based_cache_dir()
+
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
     <body style='font-family:sans-serif;'>
@@ -142,7 +152,7 @@ def search():
     for item in results:
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
-        save_title(video_id, title)
+        save_title(video_id, title, ip_cache_dir)
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -178,10 +188,11 @@ def download():
     if not video_id:
         return "Missing video ID", 400
 
-    title = safe_filename(load_title(video_id))
+    ip_cache_dir = get_ip_based_cache_dir()
+    title = safe_filename(load_title(video_id, ip_cache_dir))
     ext = "mp3" if fmt == "mp3" else "mp4"
     filename = f"{video_id}_{title}.{ext}"
-    file_path = TMP_DIR / filename
+    file_path = ip_cache_dir / filename
 
     if not file_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -191,7 +202,7 @@ def download():
 
         base_cmd = [
             "yt-dlp",
-            "--output", str(TMP_DIR / f"{video_id}_{title}.%(ext)s"),
+            "--output", str(ip_cache_dir / f"{video_id}_{title}.%(ext)s"),
             "--user-agent", FIXED_USER_AGENT,
             "--cookies", cookies_path,
             url
