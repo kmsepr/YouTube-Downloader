@@ -78,7 +78,6 @@ def index():
         </div>
         """
 
-    # Fetch related videos if any previous video is available
     last_video = get_last_video()
     if last_video:
         try:
@@ -136,7 +135,9 @@ def search():
     <form method='get' action='/search'>
         <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
         <input type='submit' value='Search'>
-    </form><br><h3>Search results for '{query}'</h3>
+    </form>
+    <a href='/'>Home</a><br><br>
+    <h3>Search results for '{query}'</h3>
     """
 
     for item in results:
@@ -151,8 +152,7 @@ def search():
             <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
         </div>
         """
-    
-    # Set the last video for future reference
+
     if results:
         set_last_video(results[0]["id"]["videoId"])
 
