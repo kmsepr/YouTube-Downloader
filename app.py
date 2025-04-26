@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Environment Variables
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', 'your-api-key-here')  # Replace with your YouTube API key
-CHANNELS = ["channel_1_handle", "channel_2_handle", "channel_3_handle"]  # Replace with actual YouTube channel usernames
+CHANNELS = ["@entriapp", "@entridegreelevelexams",]  # Replace with actual YouTube channel usernames
 
 # Flask App Setup
 app = Flask(__name__)
