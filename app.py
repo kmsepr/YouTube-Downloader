@@ -13,8 +13,10 @@ import shutil
 app = Flask(__name__)
 BASE_DIR = Path("/mnt/data/ytmp3")
 TEMP_DIR = Path("/mnt/data/temp")
+THUMB_DIR = Path("/mnt/data/thumbs")  # Directory to store downloaded thumbnails
 BASE_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
+THUMB_DIR.mkdir(exist_ok=True)
 
 TITLE_CACHE = BASE_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
@@ -60,6 +62,18 @@ def set_last_video(video_id):
 def get_last_video():
     if LAST_VIDEO_FILE.exists():
         return LAST_VIDEO_FILE.read_text().strip()
+    return None
+
+def download_thumbnail(video_id):
+    thumb_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+    thumb_path = THUMB_DIR / f"{video_id}.jpg"
+    try:
+        r = requests.get(thumb_url, headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        if r.status_code == 200:
+            thumb_path.write_bytes(r.content)
+            return thumb_path
+    except Exception as e:
+        logging.warning(f"Thumbnail download failed: {e}")
     return None
 
 @app.route("/")
@@ -209,8 +223,8 @@ def ready():
 
         if fmt == "mp3":
             cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
-                "--extract-audio", "--audio-format", "mp3"
+                "--extract-audio", "--audio-format", "mp3",
+                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
             ]
         else:
             cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
@@ -221,7 +235,27 @@ def ready():
         try:
             subprocess.run(cmd, check=True)
             if temp_path.exists():
-                shutil.move(str(temp_path), str(final_path))
+                if fmt == "mp3":
+                    thumb_path = download_thumbnail(video_id)
+                    if thumb_path and thumb_path.exists():
+                        # Embed thumbnail into mp3
+                        final_with_art = BASE_DIR / f"{video_id}_{title}_with_art.mp3"
+                        subprocess.run([
+                            "ffmpeg", "-y",
+                            "-i", str(temp_path),
+                            "-i", str(thumb_path),
+                            "-map", "0", "-map", "1",
+                            "-c", "copy",
+                            "-id3v2_version", "3",
+                            "-metadata:s:v", "title=Album cover",
+                            "-metadata:s:v", "comment=Cover (front)",
+                            str(final_with_art)
+                        ], check=True)
+                        shutil.move(str(final_with_art), str(final_path))
+                    else:
+                        shutil.move(str(temp_path), str(final_path))
+                else:
+                    shutil.move(str(temp_path), str(final_path))
         except Exception as e:
             logging.error(f"Download failed: {e}")
             return "Download failed", 500
