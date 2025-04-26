@@ -1,168 +1,90 @@
 import os
-import threading
 import time
-import shutil
-import re
-from flask import Flask, request, send_file, render_template_string
-from yt_dlp import YoutubeDL
+import logging
 from googleapiclient.discovery import build
+from unidecode import unidecode
+import yt_dlp
+from flask import Flask, render_template, send_from_directory
+from threading import Thread
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Environment Variables
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', 'your-api-key-here')  # Replace with your YouTube API key
+CHANNELS = ["channel_1_handle", "channel_2_handle", "channel_3_handle"]  # Replace with actual YouTube channel usernames
+
+# Flask App Setup
 app = Flask(__name__)
 
-# Hardcoded YouTube channel IDs (replace with your actual channel IDs)
-CHANNELS = ['UCLz0R5eHg5Yeo5JThWtfZ8Q', 'UCOhHO2ICt0ti9KAh-QHvttQ']  # Add your actual channels here
-CACHE_ROOT = 'cache'
-IP_ISOLATION = True
+# Initialize YouTube API client
+def get_youtube_service():
+    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Templates
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head><title>YouTube MP3 & MP4 Stream</title></head>
-<body>
-<h1>YouTube Channel Cache</h1>
-{% for channel, files in data.items() %}
-<h2>{{ channel }}</h2>
-<ul>
-{% for file in files %}
-<li>
-  <b>{{ file['title'] }}</b> ({{ file['date'] }})<br>
-  <a href="/stream/{{ channel }}/{{ file['filename'] }}">MP3</a> |
-  <a href="/stream/{{ channel }}/{{ file['filename'].replace('.mp3', '.mp4') }}">MP4</a>
-</li>
-{% endfor %}
-</ul>
-{% endfor %}
-</body>
-</html>
-"""
-
-def get_user_cache_dir():
-    if IP_ISOLATION:
-        return os.path.join(CACHE_ROOT, request.remote_addr.replace('.', '_'))
-    return CACHE_ROOT
-
-def sanitize_filename(name):
-    return re.sub(r'[^\w\-\.]', '_', name)
-
-def fetch_latest_videos(channel):
-    youtube = build('youtube', 'v3', developerKey=os.environ.get('YOUTUBE_API_KEY'))
-    request = youtube.search().list(part='snippet', channelId=channel, maxResults=3, order='date')
-    response = request.execute()
-    videos = []
-    for item in response['items']:
-        if item['id']['kind'] == 'youtube#video':
-            title = item['snippet']['title']
-            date = item['snippet']['publishedAt'].split('T')[0]
-            video_id = item['id']['videoId']
-            videos.append({'id': video_id, 'title': title, 'date': date})
-    return videos
-
-def download_media(video_id, title, cache_dir):
-    safe_title = sanitize_filename(title)
-    mp3_path = os.path.join(cache_dir, f'{safe_title}.mp3')
-    mp4_path = os.path.join(cache_dir, f'{safe_title}.mp4')
-
-    if not os.path.exists(mp3_path):
-        ydl_opts_mp3 = {
-            'format': 'bestaudio',
-            'outtmpl': mp3_path,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '64',
-            }],
-            'quiet': True
-        }
-        with YoutubeDL(ydl_opts_mp3) as ydl:
-            ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
-
-    if not os.path.exists(mp4_path):
-        ydl_opts_mp4 = {
-            'format': '18',
-            'outtmpl': mp4_path,
-            'quiet': True
-        }
-        with YoutubeDL(ydl_opts_mp4) as ydl:
-            ydl.download([f'https://www.youtube.com/watch?v={video_id}'])
-
-def cleanup_old_files(cache_dir):
-    files = sorted(
-        [f for f in os.listdir(cache_dir) if f.endswith('.mp3')],
-        key=lambda x: os.path.getmtime(os.path.join(cache_dir, x)),
-        reverse=True
+# Function to fetch latest videos from YouTube channels
+def get_latest_videos_from_channel(channel_handle):
+    youtube = get_youtube_service()
+    request = youtube.search().list(
+        part="snippet",
+        channelId=channel_handle,
+        maxResults=5,
+        order="date"
     )
-    for old in files[3:]:
-        base = old.rsplit('.', 1)[0]
-        try:
-            os.remove(os.path.join(cache_dir, f'{base}.mp3'))
-            os.remove(os.path.join(cache_dir, f'{base}.mp4'))
-        except FileNotFoundError:
-            continue
+    response = request.execute()
+    return response["items"]
 
-def background_cache():
+# Function to download and convert videos
+def download_and_convert_video(url, download_dir):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': f'{download_dir}/%(title)s.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',  # Convert video to MP4
+        }],
+        'quiet': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+# Function to clean up any special characters in the video title
+def clean_video_title(title):
+    return unidecode(title)  # Convert to ASCII, remove any special characters
+
+# Route to serve MP4 files
+@app.route('/video/<filename>')
+def serve_video(filename):
+    return send_from_directory(os.path.join(os.getcwd(), 'downloads'), filename)
+
+# Function to fetch and serve the latest videos from multiple channels
+def fetch_and_serve_videos():
     while True:
         for channel in CHANNELS:
-            channel_id = channel.strip()
-            for root, dirs, _ in os.walk(CACHE_ROOT):
-                if IP_ISOLATION and not dirs:
-                    continue
-                cache_dir = os.path.join(root, channel_id)
-                os.makedirs(cache_dir, exist_ok=True)
-                videos = fetch_latest_videos(channel_id)
-                for vid in videos:
-                    download_media(vid['id'], vid['title'], cache_dir)
-                cleanup_old_files(cache_dir)
-        time.sleep(3600)
+            logger.info(f"Fetching latest videos from {channel}...")
+            try:
+                videos = get_latest_videos_from_channel(channel)
+                download_dir = os.path.join(os.getcwd(), 'downloads', unidecode(channel))
+                os.makedirs(download_dir, exist_ok=True)
 
-@app.route('/')
-def index():
-    data = {}
-    user_dir = get_user_cache_dir()
-    for channel in CHANNELS:
-        channel_id = channel.strip()
-        cache_dir = os.path.join(user_dir, channel_id)
-        os.makedirs(cache_dir, exist_ok=True)
-        files = []
-        for file in sorted(os.listdir(cache_dir)):
-            if file.endswith('.mp3'):
-                base = file[:-4]
-                date = "Unknown"
-                files.append({'filename': file, 'title': base, 'date': date})
-        data[channel_id] = files
-    return render_template_string(HTML_TEMPLATE, data=data)
+                for video in videos:
+                    title = clean_video_title(video['snippet']['title'])
+                    url = f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+                    logger.info(f"Downloading video: {title}")
+                    download_and_convert_video(url, download_dir)
 
-@app.route('/stream/<channel>/<filename>')
-def stream_file(channel, filename):
-    cache_dir = os.path.join(get_user_cache_dir(), channel)
-    file_path = os.path.join(cache_dir, filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=False)
-    return 'File not found', 404
+                time.sleep(10)  # Delay before checking the next channel
+            except Exception as e:
+                logger.error(f"Error fetching videos for channel {channel}: {e}")
+                time.sleep(30)  # Retry in case of failure
 
-@app.route('/search')
-def search():
-    query = request.args.get('q')
-    if not query:
-        return 'Missing query', 400
-    youtube = build('youtube', 'v3', developerKey=os.environ.get('YOUTUBE_API_KEY'))
-    req = youtube.search().list(q=query, part='snippet', type='video', maxResults=5)
-    res = req.execute()
-    output = "<h1>Search Results</h1><ul>"
-    for item in res['items']:
-        vid = item['id']['videoId']
-        title = item['snippet']['title']
-        output += f'<li>{title} - <a href="/download/{vid}">Download</a></li>'
-    return output + "</ul>"
+# Run the background task to download videos
+def run_background_task():
+    thread = Thread(target=fetch_and_serve_videos)
+    thread.daemon = True
+    thread.start()
 
-@app.route('/download/<video_id>')
-def download_from_search(video_id):
-    title = f'video_{video_id}'
-    cache_dir = get_user_cache_dir()
-    os.makedirs(cache_dir, exist_ok=True)
-    download_media(video_id, title, cache_dir)
-    return f"Downloaded: <a href='/stream/{video_id}/{title}.mp3'>MP3</a> | <a href='/stream/{video_id}/{title}.mp4'>MP4</a>"
-
+# Start the Flask app
 if __name__ == '__main__':
-    threading.Thread(target=background_cache, daemon=True).start()
+    run_background_task()  # Start fetching and downloading videos in the background
     app.run(host='0.0.0.0', port=8000)
