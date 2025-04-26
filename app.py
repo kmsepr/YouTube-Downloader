@@ -2,16 +2,19 @@ import os
 import time
 import logging
 import subprocess
-from flask import Flask, request, Response, redirect
+from flask import Flask, request, Response, redirect, url_for
 from pathlib import Path
 from urllib.parse import quote_plus
 import requests
 import json
 from unidecode import unidecode
+import shutil
 
 app = Flask(__name__)
 BASE_DIR = Path("/mnt/data/ytmp3")
+TEMP_DIR = Path("/mnt/data/temp")
 BASE_DIR.mkdir(exist_ok=True)
+TEMP_DIR.mkdir(exist_ok=True)
 
 TITLE_CACHE = BASE_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
@@ -23,17 +26,17 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
-def save_title(video_id, title, cache_dir):
+def save_title(video_id, title):
     try:
-        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
+        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
     except Exception:
         cache = {}
     cache[video_id] = title
-    (cache_dir / "title_cache.json").write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
-def load_title(video_id, cache_dir):
+def load_title(video_id):
     try:
-        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
+        cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
         return cache.get(video_id, video_id)
     except Exception:
         return video_id
@@ -48,7 +51,7 @@ def get_unique_video_ids():
     return unique_ids
 
 def safe_filename(name):
-    name = unidecode(name)  # Transliterates Unicode to ASCII
+    name = unidecode(name)
     return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
 
 def set_last_video(video_id):
@@ -68,7 +71,7 @@ def index():
     cached_html = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
         ext = file.suffix.lstrip(".")
-        title = load_title(video_id, BASE_DIR)
+        title = load_title(video_id)
         cached_html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -96,7 +99,7 @@ def index():
             for item in results:
                 vid = item["id"]["videoId"]
                 title = item["snippet"]["title"]
-                save_title(vid, title, BASE_DIR)
+                save_title(vid, title)
                 related_html += f"""
                 <div style='margin-bottom:10px; font-size:small;'>
                     <img src='/thumb/{vid}' width='120' height='90'><br>
@@ -143,7 +146,7 @@ def search():
     for item in results:
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
-        save_title(video_id, title, BASE_DIR)
+        save_title(video_id, title)
         html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -178,12 +181,19 @@ def download():
     if not video_id:
         return "Missing video ID", 400
 
-    title = safe_filename(load_title(video_id, BASE_DIR))
-    ext = "mp3" if fmt == "mp3" else "mp4"
-    filename = f"{video_id}_{title}.{ext}"
-    file_path = BASE_DIR / filename
+    return redirect(url_for('ready', q=video_id, fmt=fmt))
 
-    if not file_path.exists():
+@app.route("/ready")
+def ready():
+    video_id = request.args.get("q")
+    fmt = request.args.get("fmt", "mp3")
+
+    title = safe_filename(load_title(video_id))
+    ext = "mp3" if fmt == "mp3" else "mp4"
+    final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
+    temp_path = TEMP_DIR / f"{video_id}_{title}.{ext}"
+
+    if not final_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
         cookies_path = "/mnt/data/cookies.txt"
         if not Path(cookies_path).exists():
@@ -191,7 +201,7 @@ def download():
 
         base_cmd = [
             "yt-dlp",
-            "--output", str(BASE_DIR / f"{video_id}_{title}.%(ext)s"),
+            "--output", str(temp_path.with_suffix(".%(ext)s")),
             "--user-agent", FIXED_USER_AGENT,
             "--cookies", cookies_path,
             url
@@ -208,27 +218,26 @@ def download():
                 "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
             ]
 
-        success = False
-        for attempt in range(3):
-            try:
-                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
-                subprocess.run(cmd, check=True)
-                success = True
-                break
-            except subprocess.CalledProcessError as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}")
-                time.sleep(10)
+        try:
+            subprocess.run(cmd, check=True)
+            if temp_path.exists():
+                shutil.move(str(temp_path), str(final_path))
+        except Exception as e:
+            logging.error(f"Download failed: {e}")
+            return "Download failed", 500
 
-        if not success or not file_path.exists():
-            return "Download failed after retries", 500
-
-    def generate():
-        with open(file_path, "rb") as f:
+    # Now serve the file and delete after sending
+    def generate_and_delete():
+        with open(final_path, "rb") as f:
             yield from f
+        try:
+            final_path.unlink()
+        except Exception:
+            pass
 
     mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
-    return Response(generate(), mimetype=mimetype, headers={
-        "Content-Disposition": f'attachment; filename="{filename}"'
+    return Response(generate_and_delete(), mimetype=mimetype, headers={
+        "Content-Disposition": f'attachment; filename="{title}.{ext}"'
     })
 
 if __name__ == "__main__":
