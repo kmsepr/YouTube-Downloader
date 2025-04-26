@@ -240,4 +240,4 @@ def ready():
     return Response(stream_and_delete(), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8000)
