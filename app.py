@@ -13,7 +13,7 @@ import shutil
 app = Flask(__name__)
 BASE_DIR = Path("/mnt/data/ytmp3")
 TEMP_DIR = Path("/mnt/data/temp")
-THUMB_DIR = Path("/mnt/data/thumbs")  # Directory to store downloaded thumbnails
+THUMB_DIR = Path("/mnt/data/thumbs")
 BASE_DIR.mkdir(exist_ok=True)
 TEMP_DIR.mkdir(exist_ok=True)
 THUMB_DIR.mkdir(exist_ok=True)
@@ -238,7 +238,6 @@ def ready():
                 if fmt == "mp3":
                     thumb_path = download_thumbnail(video_id)
                     if thumb_path and thumb_path.exists():
-                        # Embed thumbnail into mp3
                         final_with_art = BASE_DIR / f"{video_id}_{title}_with_art.mp3"
                         subprocess.run([
                             "ffmpeg", "-y",
@@ -260,7 +259,6 @@ def ready():
             logging.error(f"Download failed: {e}")
             return "Download failed", 500
 
-    # Now serve the file and delete after sending
     def generate_and_delete():
         with open(final_path, "rb") as f:
             yield from f
@@ -270,9 +268,7 @@ def ready():
             pass
 
     mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
-    return Response(generate_and_delete(), mimetype=mimetype, headers={
-        "Content-Disposition": f'attachment; filename="{title}.{ext}"'
-    })
+    return Response(generate_and_delete(), mimetype=mimetype)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
