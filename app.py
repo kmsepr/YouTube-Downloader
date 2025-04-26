@@ -1,90 +1,235 @@
 import os
 import time
 import logging
-from googleapiclient.discovery import build
+import subprocess
+from flask import Flask, request, Response, redirect
+from pathlib import Path
+from urllib.parse import quote_plus
+import requests
+import json
 from unidecode import unidecode
-import yt_dlp
-from flask import Flask, render_template, send_from_directory
-from threading import Thread
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Environment Variables
-YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', 'your-api-key-here')  # Replace with your YouTube API key
-CHANNELS = ["@entriapp", "@entridegreelevelexams",]  # Replace with actual YouTube channel usernames
-
-# Flask App Setup
 app = Flask(__name__)
+BASE_DIR = Path("/mnt/data/ytmp3")
+BASE_DIR.mkdir(exist_ok=True)
 
-# Initialize YouTube API client
-def get_youtube_service():
-    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+TITLE_CACHE = BASE_DIR / "title_cache.json"
+if not TITLE_CACHE.exists():
+    TITLE_CACHE.write_text("{}", encoding="utf-8")
 
-# Function to fetch latest videos from YouTube channels
-def get_latest_videos_from_channel(channel_handle):
-    youtube = get_youtube_service()
-    request = youtube.search().list(
-        part="snippet",
-        channelId=channel_handle,
-        maxResults=5,
-        order="date"
-    )
-    response = request.execute()
-    return response["items"]
+LAST_VIDEO_FILE = BASE_DIR / "last_video.txt"
+FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
-# Function to download and convert videos
-def download_and_convert_video(url, download_dir):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': f'{download_dir}/%(title)s.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': 'mp4',  # Convert video to MP4
-        }],
-        'quiet': True,
+logging.basicConfig(level=logging.DEBUG)
+
+def save_title(video_id, title, cache_dir):
+    try:
+        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
+    except Exception:
+        cache = {}
+    cache[video_id] = title
+    (cache_dir / "title_cache.json").write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+def load_title(video_id, cache_dir):
+    try:
+        cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
+        return cache.get(video_id, video_id)
+    except Exception:
+        return video_id
+
+def get_unique_video_ids():
+    files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4"))
+    unique_ids = {}
+    for file in files:
+        vid = file.stem.split("_")[0]
+        if vid not in unique_ids:
+            unique_ids[vid] = file
+    return unique_ids
+
+def safe_filename(name):
+    name = unidecode(name)  # Transliterates Unicode to ASCII
+    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
+
+def set_last_video(video_id):
+    LAST_VIDEO_FILE.write_text(video_id)
+
+def get_last_video():
+    if LAST_VIDEO_FILE.exists():
+        return LAST_VIDEO_FILE.read_text().strip()
+    return None
+
+@app.route("/")
+def index():
+    search_html = """<form method='get' action='/search'>
+    <input type='text' name='q' placeholder='Search YouTube...'>
+    <input type='submit' value='Search'></form><br>"""
+
+    cached_html = "<h3>Cached Files</h3>"
+    for video_id, file in get_unique_video_ids().items():
+        ext = file.suffix.lstrip(".")
+        title = load_title(video_id, BASE_DIR)
+        cached_html += f"""
+        <div style='margin-bottom:10px; font-size:small;'>
+            <img src='/thumb/{video_id}' width='120' height='90'><br>
+            <b>{title}</b><br>
+            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
+            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
+        </div>
+        """
+
+    last_video = get_last_video()
+    if last_video:
+        try:
+            url = "https://www.googleapis.com/youtube/v3/search"
+            params = {
+                "key": YOUTUBE_API_KEY,
+                "relatedToVideoId": last_video,
+                "type": "video",
+                "part": "snippet",
+                "maxResults": 5
+            }
+            r = requests.get(url, params=params)
+            results = r.json().get("items", [])
+
+            related_html = "<h3>Related to Your Last Search</h3>"
+            for item in results:
+                vid = item["id"]["videoId"]
+                title = item["snippet"]["title"]
+                save_title(vid, title, BASE_DIR)
+                related_html += f"""
+                <div style='margin-bottom:10px; font-size:small;'>
+                    <img src='/thumb/{vid}' width='120' height='90'><br>
+                    <b>{title}</b><br>
+                    <a href='/download?q={vid}&fmt=mp3'>Download MP3</a> |
+                    <a href='/download?q={vid}&fmt=mp4'>Download MP4</a>
+                </div>
+                """
+            cached_html += related_html
+        except Exception as e:
+            logging.warning(f"Failed to load related videos: {e}")
+
+    return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
+
+@app.route("/search")
+def search():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return redirect("/")
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "q": query,
+        "part": "snippet",
+        "type": "video",
+        "maxResults": 5
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
 
-# Function to clean up any special characters in the video title
-def clean_video_title(title):
-    return unidecode(title)  # Convert to ASCII, remove any special characters
+    r = requests.get(url, params=params)
+    results = r.json().get("items", [])
 
-# Route to serve MP4 files
-@app.route('/video/<filename>')
-def serve_video(filename):
-    return send_from_directory(os.path.join(os.getcwd(), 'downloads'), filename)
+    html = f"""
+    <html><head><title>Search results for '{query}'</title></head>
+    <body style='font-family:sans-serif;'>
+    <form method='get' action='/search'>
+        <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
+        <input type='submit' value='Search'>
+    </form>
+    <a href='/'>Home</a><br><br>
+    <h3>Search results for '{query}'</h3>
+    """
 
-# Function to fetch and serve the latest videos from multiple channels
-def fetch_and_serve_videos():
-    while True:
-        for channel in CHANNELS:
-            logger.info(f"Fetching latest videos from {channel}...")
+    for item in results:
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        save_title(video_id, title, BASE_DIR)
+        html += f"""
+        <div style='margin-bottom:10px; font-size:small;'>
+            <img src='/thumb/{video_id}' width='120' height='90'><br>
+            <b>{title}</b><br>
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
+            <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
+        </div>
+        """
+
+    if results:
+        set_last_video(results[0]["id"]["videoId"])
+
+    html += "</body></html>"
+    return html
+
+@app.route("/thumb/<video_id>")
+def thumbnail_proxy(video_id):
+    url = f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
+    try:
+        r = requests.get(url, headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        if r.status_code == 200:
+            return Response(r.content, mimetype="image/jpeg")
+        else:
+            return "Thumbnail not found", 404
+    except Exception:
+        return "Error fetching thumbnail", 500
+
+@app.route("/download")
+def download():
+    video_id = request.args.get("q")
+    fmt = request.args.get("fmt", "mp3")
+    if not video_id:
+        return "Missing video ID", 400
+
+    title = safe_filename(load_title(video_id, BASE_DIR))
+    ext = "mp3" if fmt == "mp3" else "mp4"
+    filename = f"{video_id}_{title}.{ext}"
+    file_path = BASE_DIR / filename
+
+    if not file_path.exists():
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        cookies_path = "/mnt/data/cookies.txt"
+        if not Path(cookies_path).exists():
+            return "Cookies file not found", 400
+
+        base_cmd = [
+            "yt-dlp",
+            "--output", str(BASE_DIR / f"{video_id}_{title}.%(ext)s"),
+            "--user-agent", FIXED_USER_AGENT,
+            "--cookies", cookies_path,
+            url
+        ]
+
+        if fmt == "mp3":
+            cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
+                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
+                "--extract-audio", "--audio-format", "mp3"
+            ]
+        else:
+            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
+                "--recode-video", "mp4",
+                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
+            ]
+
+        success = False
+        for attempt in range(3):
             try:
-                videos = get_latest_videos_from_channel(channel)
-                download_dir = os.path.join(os.getcwd(), 'downloads', unidecode(channel))
-                os.makedirs(download_dir, exist_ok=True)
+                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
+                subprocess.run(cmd, check=True)
+                success = True
+                break
+            except subprocess.CalledProcessError as e:
+                logging.warning(f"Attempt {attempt + 1} failed: {e}")
+                time.sleep(10)
 
-                for video in videos:
-                    title = clean_video_title(video['snippet']['title'])
-                    url = f"https://www.youtube.com/watch?v={video['id']['videoId']}"
-                    logger.info(f"Downloading video: {title}")
-                    download_and_convert_video(url, download_dir)
+        if not success or not file_path.exists():
+            return "Download failed after retries", 500
 
-                time.sleep(10)  # Delay before checking the next channel
-            except Exception as e:
-                logger.error(f"Error fetching videos for channel {channel}: {e}")
-                time.sleep(30)  # Retry in case of failure
+    def generate():
+        with open(file_path, "rb") as f:
+            yield from f
 
-# Run the background task to download videos
-def run_background_task():
-    thread = Thread(target=fetch_and_serve_videos)
-    thread.daemon = True
-    thread.start()
+    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
+    return Response(generate(), mimetype=mimetype, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    })
 
-# Start the Flask app
-if __name__ == '__main__':
-    run_background_task()  # Start fetching and downloading videos in the background
-    app.run(host='0.0.0.0', port=8000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
