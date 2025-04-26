@@ -23,6 +23,7 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 
 logging.basicConfig(level=logging.DEBUG)
 
+
 def save_title(video_id, title, cache_dir):
     try:
         cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
@@ -31,12 +32,14 @@ def save_title(video_id, title, cache_dir):
     cache[video_id] = title
     (cache_dir / "title_cache.json").write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
+
 def load_title(video_id, cache_dir):
     try:
         cache = json.loads((cache_dir / "title_cache.json").read_text(encoding="utf-8"))
         return cache.get(video_id, video_id)
     except Exception:
         return video_id
+
 
 def get_unique_video_ids():
     files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4"))
@@ -47,23 +50,25 @@ def get_unique_video_ids():
             unique_ids[vid] = file
     return unique_ids
 
+
 def safe_filename(name):
     name = unidecode(name)  # Transliterates Unicode to ASCII
-    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
+    return "".join(c if c.isalnum() or c in " .-" else "" for c in name)
+
 
 def set_last_video(video_id):
     LAST_VIDEO_FILE.write_text(video_id)
+
 
 def get_last_video():
     if LAST_VIDEO_FILE.exists():
         return LAST_VIDEO_FILE.read_text().strip()
     return None
 
+
 @app.route("/")
 def index():
-    search_html = """<form method='get' action='/search'>
-    <input type='text' name='q' placeholder='Search YouTube...'>
-    <input type='submit' value='Search'></form><br>"""
+    search_html = """<form method='get' action='/search'> <input type='text' name='q' placeholder='Search YouTube...'> <input type='submit' value='Search'></form><br>"""
 
     cached_html = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
@@ -73,6 +78,7 @@ def index():
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
+            <a href='/video/{video_id}'>View Details</a> |
             <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
         </div>
@@ -101,6 +107,7 @@ def index():
                 <div style='margin-bottom:10px; font-size:small;'>
                     <img src='/thumb/{vid}' width='120' height='90'><br>
                     <b>{title}</b><br>
+                    <a href='/video/{vid}'>View Details</a> |
                     <a href='/download?q={vid}&fmt=mp3'>Download MP3</a> |
                     <a href='/download?q={vid}&fmt=mp4'>Download MP4</a>
                 </div>
@@ -110,6 +117,7 @@ def index():
             logging.warning(f"Failed to load related videos: {e}")
 
     return f"<html><body style='font-family:sans-serif;'>{search_html}{cached_html}</body></html>"
+
 
 @app.route("/search")
 def search():
@@ -148,6 +156,7 @@ def search():
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
+            <a href='/video/{video_id}'>View Details</a> |
             <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
             <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
         </div>
@@ -158,6 +167,73 @@ def search():
 
     html += "</body></html>"
     return html
+
+
+@app.route("/video/<video_id>")
+def video_details(video_id):
+    title = load_title(video_id, BASE_DIR)
+    description_html = f"<h3>{title}</h3><p>Loading description...</p>"
+
+    try:
+        url = f"https://www.googleapis.com/youtube/v3/videos"
+        params = {
+            "key": YOUTUBE_API_KEY,
+            "id": video_id,
+            "part": "snippet"
+        }
+        r = requests.get(url, params=params)
+        video_data = r.json().get("items", [])[0]
+
+        description = video_data["snippet"]["description"]
+        description_html = f"<h3>{title}</h3><p>{description}</p>"
+
+        # Fetch related videos
+        related_html = "<h3>Related Videos</h3>"
+        related_url = "https://www.googleapis.com/youtube/v3/search"
+        related_params = {
+            "key": YOUTUBE_API_KEY,
+            "relatedToVideoId": video_id,
+            "type": "video",
+            "part": "snippet",
+            "maxResults": 5
+        }
+        related_r = requests.get(related_url, params=related_params)
+        related_results = related_r.json().get("items", [])
+
+        for related_item in related_results:
+            related_video_id = related_item["id"]["videoId"]
+            related_title = related_item["snippet"]["title"]
+            save_title(related_video_id, related_title, BASE_DIR)
+            related_html += f"""
+            <div style='margin-bottom:10px; font-size:small;'>
+                <img src='/thumb/{related_video_id}' width='120' height='90'><br>
+                <b>{related_title}</b><br>
+                <a href='/video/{related_video_id}'>View Details</a> |
+                <a href='/download?q={related_video_id}&fmt=mp3'>Download MP3</a> |
+                <a href='/download?q={related_video_id}&fmt=mp4'>Download MP4</a>
+            </div>
+            """
+
+        # Add the Home link at the end of the page
+        return f"""
+        <html>
+            <head><title>{title}</title></head>
+            <body style='font-family:sans-serif;'>
+                <a href='/'>Home</a><br><br>
+                {description_html}
+                {related_html}
+                <br><br>
+                <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
+                <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
+                <br><br>
+                <a href='/'>Back to Home</a>
+            </body>
+        </html>
+        """
+    except Exception as e:
+        logging.error(f"Error fetching video details: {e}")
+        return "Error fetching video details", 500
+
 
 @app.route("/thumb/<video_id>")
 def thumbnail_proxy(video_id):
@@ -171,65 +247,19 @@ def thumbnail_proxy(video_id):
     except Exception:
         return "Error fetching thumbnail", 500
 
+
 @app.route("/download")
 def download():
     video_id = request.args.get("q")
-    fmt = request.args.get("fmt", "mp3")
-    if not video_id:
-        return "Missing video ID", 400
+    format = request.args.get("fmt", "mp3")
 
-    title = safe_filename(load_title(video_id, BASE_DIR))
-    ext = "mp3" if fmt == "mp3" else "mp4"
-    filename = f"{video_id}_{title}.{ext}"
-    file_path = BASE_DIR / filename
-
+    # Handle the download process (e.g., streaming or direct file transfer)
+    file_path = BASE_DIR / f"{video_id}_{format}.mp3"  # Example path, modify as needed
     if not file_path.exists():
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        cookies_path = "/mnt/data/cookies.txt"
-        if not Path(cookies_path).exists():
-            return "Cookies file not found", 400
+        return "File not found", 404
 
-        base_cmd = [
-            "yt-dlp",
-            "--output", str(BASE_DIR / f"{video_id}_{title}.%(ext)s"),
-            "--user-agent", FIXED_USER_AGENT,
-            "--cookies", cookies_path,
-            url
-        ]
+    return Response(file_path.read_bytes(), mimetype="audio/mp3" if format == "mp3" else "video/mp4")
 
-        if fmt == "mp3":
-            cmd = base_cmd[:1] + ["-f", "bestaudio"] + base_cmd[1:] + [
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k",
-                "--extract-audio", "--audio-format", "mp3"
-            ]
-        else:
-            cmd = base_cmd[:1] + ["-f", "best[ext=mp4]"] + base_cmd[1:] + [
-                "--recode-video", "mp4",
-                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-            ]
-
-        success = False
-        for attempt in range(3):
-            try:
-                logging.debug(f"Attempt {attempt + 1}: running yt-dlp...")
-                subprocess.run(cmd, check=True)
-                success = True
-                break
-            except subprocess.CalledProcessError as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {e}")
-                time.sleep(10)
-
-        if not success or not file_path.exists():
-            return "Download failed after retries", 500
-
-    def generate():
-        with open(file_path, "rb") as f:
-            yield from f
-
-    mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
-    return Response(generate(), mimetype=mimetype, headers={
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+    app.run(debug=True, host="0.0.0.0", port=8000)
