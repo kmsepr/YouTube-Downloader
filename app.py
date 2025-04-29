@@ -85,7 +85,8 @@ def index():
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
             <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
+            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a> |
+            <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
         </div>"""
 
     last_video = get_last_video()
@@ -128,7 +129,7 @@ def search():
         "q": query,
         "part": "snippet",
         "type": "video",
-        "maxResults": 5
+        "maxResults": 15  # Increased to 15
     })
 
     html = f"""
@@ -238,6 +239,26 @@ def ready():
             pass
 
     return Response(stream_and_delete(), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
+
+@app.route("/remove")
+def remove():
+    video_id = request.args.get("q")
+    if not video_id:
+        return redirect("/")
+
+    removed = 0
+    for file in BASE_DIR.glob(f"{video_id}_*.*"):
+        try:
+            file.unlink()
+            removed += 1
+        except Exception as e:
+            logging.warning(f"Failed to remove {file}: {e}")
+
+    thumb = THUMB_DIR / f"{video_id}.jpg"
+    if thumb.exists():
+        thumb.unlink()
+
+    return redirect("/")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
