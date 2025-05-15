@@ -182,52 +182,67 @@ def download():
 def ready():
     video_id = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
-    title = safe_filename(load_title(video_id))
+    if not video_id:
+        return "Missing video ID", 400
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    cookies_path = "/mnt/data/cookies.txt"
+    if not Path(cookies_path).exists():
+        return "Cookies file missing", 400
+
     ext = "mp3" if fmt == "mp3" else "mp4"
-    final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
-    temp_path = TEMP_DIR / f"{video_id}_{title}.{ext}"
+    base_path = TEMP_DIR / f"{video_id}"
+    final_path = BASE_DIR / f"{video_id}.{ext}"
+    audio_path = base_path.with_suffix(".webm")
+    thumb_path = base_path.with_suffix(".jpg")
 
     if not final_path.exists():
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        cookies_path = "/mnt/data/cookies.txt"
-        if not Path(cookies_path).exists():
-            return "Cookies file missing", 400
-
-        base_cmd = [
-            "yt-dlp", "--output", str(temp_path.with_suffix(".%(ext)s")),
-            "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
-        ]
-
-        cmd = base_cmd + ([
-            "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
-            "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
-        ] if fmt == "mp3" else [
-            "-f", "best[ext=mp4]", "--recode-video", "mp4",
-            "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-        ])
-
         try:
+            # Download audio + thumbnail
+            cmd = [
+                "yt-dlp", "-f", "bestaudio",
+                "--output", str(base_path) + ".%(ext)s",
+                "--cookies", cookies_path,
+                "--user-agent", FIXED_USER_AGENT,
+                "--write-thumbnail", "--convert-thumbnails", "jpg",
+                url
+            ]
             subprocess.run(cmd, check=True)
-            if temp_path.exists():
-                if fmt == "mp3":
-                    thumb = download_thumbnail(video_id)
-                    if thumb and thumb.exists():
-                        final_with_art = BASE_DIR / f"{video_id}_{title}_with_art.mp3"
-                        subprocess.run([
-                            "ffmpeg", "-y", "-i", str(temp_path), "-i", str(thumb),
-                            "-map", "0", "-map", "1", "-c", "copy",
-                            "-id3v2_version", "3",
-                            "-metadata:s:v", "title=Album cover",
-                            "-metadata:s:v", "comment=Cover (front)",
-                            str(final_with_art)
-                        ], check=True)
-                        shutil.move(str(final_with_art), str(final_path))
-                    else:
-                        shutil.move(str(temp_path), str(final_path))
-                else:
-                    shutil.move(str(temp_path), str(final_path))
+
+            if not audio_path.exists():
+                logging.error(f"Audio not downloaded for {video_id}")
+                return "Audio download failed", 500
+
+            if fmt == "mp3":
+                title = safe_filename(load_title(video_id))
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", str(audio_path),
+                    "-i", str(thumb_path),
+                    "-map", "0:a", "-map", "1:v",
+                    "-c:a", "libmp3lame", "-c:v", "mjpeg",
+                    "-b:a", "40k", "-ar", "22050", "-ac", "1",
+                    "-id3v2_version", "3",
+                    "-metadata:s:v", "title=Album cover",
+                    "-metadata:s:v", "comment=Cover (front)",
+                    str(final_path)
+                ], check=True)
+            else:
+                # MP4 version
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", str(audio_path),
+                    "-vf", "scale=320:240", "-r", "15",
+                    "-b:v", "384k", "-b:a", "12k",
+                    str(final_path)
+                ], check=True)
+
+            # Clean up
+            audio_path.unlink(missing_ok=True)
+            thumb_path.unlink(missing_ok=True)
+
         except Exception as e:
-            logging.error(f"Download failed for {video_id}: {e}")
+            logging.error(f"Download or conversion failed for {video_id}: {e}")
             return "Download failed", 500
 
     def stream_and_delete():
