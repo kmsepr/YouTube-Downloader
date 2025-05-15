@@ -221,7 +221,7 @@ def ready():
                     "-i", str(thumb_path),
                     "-map", "0:a", "-map", "1:v",
                     "-c:a", "libmp3lame", "-c:v", "mjpeg",
-                    "-b:a", "40k", "-ar", "22050", "-ac", "1",
+                    "-b:a", "24k", "-ar", "22050", "-ac", "1",
                     "-id3v2_version", "3",
                     "-metadata:s:v", "title=Album cover",
                     "-metadata:s:v", "comment=Cover (front)",
