@@ -245,15 +245,7 @@ def ready():
             logging.error(f"Download or conversion failed for {video_id}: {e}")
             return "Download failed", 500
 
-    def stream_and_delete():
-        with final_path.open("rb") as f:
-            yield from f
-        try:
-            final_path.unlink()
-        except Exception:
-            pass
-
-    return Response(stream_and_delete(), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
+    return Response(final_path.open("rb"), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
 
 @app.route("/remove")
 def remove():
