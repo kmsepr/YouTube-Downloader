@@ -116,7 +116,7 @@ def index():
         except Exception as e:
             logging.warning(f"Related videos fetch failed: {e}")
 
-    return f"<html><body style='font-family:sans-serif;'>{search_form}{content}</body></html>"
+    return f"<html><head><title>YouTube Downloader</title></head><body style='font-family:sans-serif;'>{search_form}{content}</body></html>"
 
 @app.route("/search")
 def search():
