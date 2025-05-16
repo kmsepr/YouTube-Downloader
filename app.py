@@ -209,7 +209,7 @@ def ready():
 
         cmd = base_cmd + ([
             "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
-            "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
+            "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"
         ] if fmt == "mp3" else [
             "-f", "best[ext=mp4]", "--recode-video", "mp4",
             "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
