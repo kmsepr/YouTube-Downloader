@@ -221,7 +221,7 @@ def ready():
                 if fmt == "mp3":
                     thumb = download_thumbnail(video_id)
                     if thumb and thumb.exists():
-                        final_with_art = BASE_DIR / f"{video_id}_{title}_with_art.mp3"
+                        final_with_art = BASE_DIR / f"{title}.mp3"
                         subprocess.run([
                             "ffmpeg", "-y", "-i", str(temp_path), "-i", str(thumb),
                             "-map", "0", "-map", "1", "-c", "copy",
