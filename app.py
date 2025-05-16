@@ -193,6 +193,15 @@ def ready():
         if not Path(cookies_path).exists():
             return "Cookies file missing", 400
 
+        # Extract metadata
+        info = subprocess.check_output([
+            "yt-dlp", "--print", "%(title)s\n%(uploader)s\n%(upload_date)s",
+            "--cookies", cookies_path, url
+        ], text=True).strip().split("\n")
+
+        video_title, uploader, upload_date = info
+        album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
+
         base_cmd = [
             "yt-dlp", "--output", str(temp_path.with_suffix(".%(ext)s")),
             "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
@@ -217,13 +226,23 @@ def ready():
                             "ffmpeg", "-y", "-i", str(temp_path), "-i", str(thumb),
                             "-map", "0", "-map", "1", "-c", "copy",
                             "-id3v2_version", "3",
+                            "-metadata", f"title={video_title}",
+                            "-metadata", f"artist={uploader}",
+                            "-metadata", f"album={album_date}",
                             "-metadata:s:v", "title=Album cover",
                             "-metadata:s:v", "comment=Cover (front)",
                             str(final_with_art)
                         ], check=True)
                         shutil.move(str(final_with_art), str(final_path))
                     else:
-                        shutil.move(str(temp_path), str(final_path))
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", str(temp_path),
+                            "-metadata", f"title={video_title}",
+                            "-metadata", f"artist={uploader}",
+                            "-metadata", f"album={album_date}",
+                            str(final_path)
+                        ], check=True)
+                        temp_path.unlink()
                 else:
                     shutil.move(str(temp_path), str(final_path))
         except Exception as e:
@@ -231,7 +250,6 @@ def ready():
             return "Download failed", 500
 
     return Response(final_path.open("rb"), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
-
 @app.route("/remove")
 def remove():
     video_id = request.args.get("q")
