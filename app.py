@@ -4,6 +4,7 @@ import json
 import shutil
 import logging
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, Response, redirect, url_for
 from urllib.parse import quote_plus
@@ -20,7 +21,8 @@ for folder in [BASE_DIR, TEMP_DIR, THUMB_DIR]:
     folder.mkdir(exist_ok=True)
 
 TITLE_CACHE = BASE_DIR / "title_cache.json"
-TITLE_CACHE.write_text("{}", encoding="utf-8") if not TITLE_CACHE.exists() else None
+if not TITLE_CACHE.exists():
+    TITLE_CACHE.write_text("{}", encoding="utf-8")
 
 LAST_VIDEO_FILE = BASE_DIR / "last_video.txt"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
@@ -31,7 +33,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Utilities
 def safe_filename(name):
     name = unidecode(name)
-    return "".join(c if c.isalnum() or c in " ._-" else "_" for c in name)
+    return "".join(c if c.isalnum() or c in " .-" else "" for c in name)
 
 def save_title(video_id, title):
     cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
@@ -61,7 +63,8 @@ def get_unique_video_ids():
 
 def download_thumbnail(video_id):
     try:
-        r = requests.get(f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg", headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        r = requests.get(f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                         headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
         if r.ok:
             thumb_path = THUMB_DIR / f"{video_id}.jpg"
             thumb_path.write_bytes(r.content)
@@ -73,9 +76,11 @@ def download_thumbnail(video_id):
 # Routes
 @app.route("/")
 def index():
-    search_form = """<form method='get' action='/search'>
-    <input type='text' name='q' placeholder='Search YouTube...'>
-    <input type='submit' value='Search'></form><br>"""
+    search_form = """
+    <form method='get' action='/search'>
+        <input type='text' name='q' placeholder='Search YouTube...'>
+        <input type='submit' value='Search'>
+    </form><br>"""
 
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
@@ -129,7 +134,7 @@ def search():
         "q": query,
         "part": "snippet",
         "type": "video",
-        "maxResults": 15  # Increased to 15
+        "maxResults": 15
     })
 
     html = f"""
@@ -153,7 +158,6 @@ def search():
                 <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
                 <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
             </div>"""
-
         if results:
             set_last_video(results[0]["id"]["videoId"])
 
@@ -163,7 +167,8 @@ def search():
 @app.route("/thumb/<video_id>")
 def thumbnail_proxy(video_id):
     try:
-        r = requests.get(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg", headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
+        r = requests.get(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
+                         headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
         if r.ok:
             return Response(r.content, mimetype="image/jpeg")
     except Exception:
@@ -193,27 +198,29 @@ def ready():
         if not Path(cookies_path).exists():
             return "Cookies file missing", 400
 
-        # Extract metadata
-        info = subprocess.check_output([
-            "yt-dlp", "--print", "%(title)s\n%(uploader)s\n%(upload_date)s",
-            "--cookies", cookies_path, url
-        ], text=True).strip().split("\n")
-
-        video_title, uploader, upload_date = info
-        album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
+        try:
+            info = subprocess.check_output([
+                "yt-dlp", "--print", "%(title)s\n%(uploader)s\n%(upload_date)s",
+                "--cookies", cookies_path, url
+            ], text=True).strip().split("\n")
+            video_title, uploader, upload_date = info
+            album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
+        except Exception as e:
+            logging.error(f"Metadata extraction failed: {e}")
+            return "Metadata fetch failed", 500
 
         base_cmd = [
             "yt-dlp", "--output", str(temp_path.with_suffix(".%(ext)s")),
             "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
         ]
 
-        cmd = base_cmd + ([
-            "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
-            "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"
-        ] if fmt == "mp3" else [
-            "-f", "best[ext=mp4]", "--recode-video", "mp4",
-            "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-        ])
+        cmd = base_cmd + (
+            ["-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
+             "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"]
+            if fmt == "mp3" else
+            ["-f", "best[ext=mp4]", "--recode-video", "mp4",
+             "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"]
+        )
 
         try:
             subprocess.run(cmd, check=True)
@@ -242,14 +249,16 @@ def ready():
                             "-metadata", f"album={album_date}",
                             str(final_path)
                         ], check=True)
-                        temp_path.unlink()
+                    temp_path.unlink()
                 else:
                     shutil.move(str(temp_path), str(final_path))
         except Exception as e:
             logging.error(f"Download failed for {video_id}: {e}")
             return "Download failed", 500
 
-    return Response(final_path.open("rb"), mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
+    return Response(final_path.open("rb"),
+                    mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
+
 @app.route("/remove")
 def remove():
     video_id = request.args.get("q")
