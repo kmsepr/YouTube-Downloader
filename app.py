@@ -199,11 +199,14 @@ def ready():
             return "Cookies file missing", 400
 
         try:
-            info = subprocess.check_output([
-                "yt-dlp", "--print", "%(title)s\n%(uploader)s\n%(upload_date)s",
+            output = subprocess.check_output([
+                "yt-dlp", "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
                 "--cookies", cookies_path, url
-            ], text=True).strip().split("\n")
-            video_title, uploader, upload_date = info
+            ], text=True).strip()
+            parts = output.split("|||")
+            if len(parts) != 3:
+                raise ValueError("Unexpected metadata format.")
+            video_title, uploader, upload_date = parts
             album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
         except Exception as e:
             logging.error(f"Metadata extraction failed: {e}")
