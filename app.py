@@ -1,59 +1,64 @@
 import os
-import time
 import json
 import shutil
 import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, Response, redirect, url_for
 from urllib.parse import quote_plus
+
 import requests
+from flask import Flask, request, Response, redirect, url_for
 from unidecode import unidecode
 
-# Setup
+# Configuration
 app = Flask(__name__)
 BASE_DIR = Path("/mnt/data/ytmp3")
 TEMP_DIR = Path("/mnt/data/temp")
 THUMB_DIR = Path("/mnt/data/thumbs")
-
-for folder in [BASE_DIR, TEMP_DIR, THUMB_DIR]:
-    folder.mkdir(exist_ok=True)
-
 TITLE_CACHE = BASE_DIR / "title_cache.json"
-if not TITLE_CACHE.exists():
-    TITLE_CACHE.write_text("{}", encoding="utf-8")
-
 LAST_VIDEO_FILE = BASE_DIR / "last_video.txt"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
+# Ensure required directories and files exist
+for folder in [BASE_DIR, TEMP_DIR, THUMB_DIR]:
+    folder.mkdir(exist_ok=True)
+
+if not TITLE_CACHE.exists():
+    TITLE_CACHE.write_text("{}", encoding="utf-8")
+
+# Logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Utilities
-def safe_filename(name):
+# Utility Functions
+def safe_filename(name: str) -> str:
+    """Sanitize and normalize a string to be used as a safe filename."""
     name = unidecode(name)
     return "".join(c if c.isalnum() or c in " .-" else "" for c in name)
 
-def save_title(video_id, title):
+def save_title(video_id: str, title: str):
+    """Cache the video title by its ID."""
     cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
     cache[video_id] = title
     TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
-def load_title(video_id):
+def load_title(video_id: str) -> str:
+    """Load a cached title or fallback to the video ID."""
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
         return cache.get(video_id, video_id)
     except Exception:
         return video_id
 
-def set_last_video(video_id):
+def set_last_video(video_id: str):
     LAST_VIDEO_FILE.write_text(video_id)
 
-def get_last_video():
+def get_last_video() -> str | None:
     return LAST_VIDEO_FILE.read_text().strip() if LAST_VIDEO_FILE.exists() else None
 
-def get_unique_video_ids():
+def get_unique_video_ids() -> dict:
+    """Return a map of unique video IDs to one of their file paths."""
     files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4"))
     unique_ids = {}
     for file in files:
@@ -61,7 +66,8 @@ def get_unique_video_ids():
         unique_ids.setdefault(vid, file)
     return unique_ids
 
-def download_thumbnail(video_id):
+def download_thumbnail(video_id: str) -> Path | None:
+    """Download and return the path to the thumbnail image for a video."""
     try:
         r = requests.get(f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
                          headers={"User-Agent": FIXED_USER_AGENT}, timeout=5)
@@ -76,16 +82,15 @@ def download_thumbnail(video_id):
 # Routes
 @app.route("/")
 def index():
-    search_form = """
+    html = """
     <form method='get' action='/search'>
         <input type='text' name='q' placeholder='Search YouTube...'>
         <input type='submit' value='Search'>
-    </form><br>"""
+    </form><br><h3>Cached Files</h3>"""
 
-    content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
         title = load_title(video_id)
-        content += f"""
+        html += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
             <b>{title}</b><br>
@@ -94,6 +99,7 @@ def index():
             <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
         </div>"""
 
+    # Related videos
     last_video = get_last_video()
     if last_video:
         try:
@@ -105,13 +111,12 @@ def index():
                 "maxResults": 5
             })
             if r.ok:
-                related = r.json().get("items", [])
-                content += "<h3>Related to Your Last Search</h3>"
-                for item in related:
+                html += "<h3>Related to Your Last Search</h3>"
+                for item in r.json().get("items", []):
                     vid = item["id"]["videoId"]
                     title = item["snippet"]["title"]
                     save_title(vid, title)
-                    content += f"""
+                    html += f"""
                     <div style='margin-bottom:10px; font-size:small;'>
                         <img src='/thumb/{vid}' width='120' height='90'><br>
                         <b>{title}</b><br>
@@ -121,7 +126,7 @@ def index():
         except Exception as e:
             logging.warning(f"Related videos fetch failed: {e}")
 
-    return f"<html><head><title>YouTube Downloader</title></head><body style='font-family:sans-serif;'>{search_form}{content}</body></html>"
+    return f"<html><head><title>YouTube Downloader</title></head><body style='font-family:sans-serif;'>{html}</body></html>"
 
 @app.route("/search")
 def search():
@@ -161,8 +166,7 @@ def search():
         if results:
             set_last_video(results[0]["id"]["videoId"])
 
-    html += "</body></html>"
-    return html
+    return html + "</body></html>"
 
 @app.route("/thumb/<video_id>")
 def thumbnail_proxy(video_id):
@@ -203,27 +207,23 @@ def ready():
                 "yt-dlp", "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
                 "--cookies", cookies_path, url
             ], text=True).strip()
-            parts = output.split("|||")
-            if len(parts) != 3:
-                raise ValueError("Unexpected metadata format.")
-            video_title, uploader, upload_date = parts
+            video_title, uploader, upload_date = output.split("|||")
             album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
         except Exception as e:
             logging.error(f"Metadata extraction failed: {e}")
             return "Metadata fetch failed", 500
 
-        base_cmd = [
+        cmd = [
             "yt-dlp", "--output", str(temp_path.with_suffix(".%(ext)s")),
             "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
         ]
 
-        cmd = base_cmd + (
-            ["-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
-             "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"]
-            if fmt == "mp3" else
-            ["-f", "best[ext=mp4]", "--recode-video", "mp4",
-             "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"]
-        )
+        if fmt == "mp3":
+            cmd += ["-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
+                    "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"]
+        else:
+            cmd += ["-f", "best[ext=mp4]", "--recode-video", "mp4",
+                    "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"]
 
         try:
             subprocess.run(cmd, check=True)
@@ -268,11 +268,9 @@ def remove():
     if not video_id:
         return redirect("/")
 
-    removed = 0
     for file in BASE_DIR.glob(f"{video_id}_*.*"):
         try:
             file.unlink()
-            removed += 1
         except Exception as e:
             logging.warning(f"Failed to remove {file}: {e}")
 
