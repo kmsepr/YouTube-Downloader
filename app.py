@@ -77,10 +77,15 @@ def download_thumbnail(video_id):
 @app.route("/")
 def index():
     search_form = """
-    <form method='get' action='/search'>
-        <input type='text' name='q' placeholder='Search YouTube...'>
-        <input type='submit' value='Search'>
-    </form><br>"""
+    <div style='text-align:center; margin-top:30px;'>
+        <form method='get' action='/search'>
+            <input type='text' name='q' placeholder='Search YouTube...'
+                   style='width:60%; padding:12px; font-size:18px; border-radius:8px; border:1px solid #ccc;'>
+            <input type='submit' value='Search'
+                   style='padding:12px 20px; font-size:18px; border-radius:8px; margin-left:10px;'>
+        </form>
+    </div><br>
+    """
 
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
@@ -140,10 +145,16 @@ def search():
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
     <body style='font-family:sans-serif;'>
-    <form method='get' action='/search'>
-        <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
-        <input type='submit' value='Search'>
-    </form><a href='/'>Home</a><br><br><h3>Search results for '{query}'</h3>"""
+    <div style='text-align:center; margin-top:30px;'>
+        <form method='get' action='/search'>
+            <input type='text' name='q' value='{query}' placeholder='Search YouTube...'
+                   style='width:60%; padding:12px; font-size:18px; border-radius:8px; border:1px solid #ccc;'>
+            <input type='submit' value='Search'
+                   style='padding:12px 20px; font-size:18px; border-radius:8px; margin-left:10px;'>
+        </form>
+    </div>
+    <a href='/' style='display:block; text-align:center; margin-top:20px;'>Home</a>
+    <br><br><h3>Search results for '{query}'</h3>"""
 
     if r.ok:
         results = r.json().get("items", [])
