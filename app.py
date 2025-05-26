@@ -90,14 +90,16 @@ def index():
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
         title = load_title(video_id)
-        content += f"""
-        <div style='margin-bottom:10px; font-size:small;'>
-            <img src='/thumb/{video_id}' width='120' height='90'><br>
-            <b>{title}</b><br>
-            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a> |
-            <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
-        </div>"""
+        file_size = file.stat().st_size / (1024 * 1024)  # in MB
+    content += f"""
+    <div style='margin-bottom:10px; font-size:small;'>
+        <img src='/thumb/{video_id}' width='120' height='90'><br>
+        <b>{title}</b><br>
+        <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
+        <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a> |
+        <a href='/remove?q={video_id}' style='color:red;'>Remove</a><br>
+        <span style='color:gray;'>Size: {file_size:.1f} MB</span>
+    </div>"""
 
     last_video = get_last_video()
     if last_video:
