@@ -1,8 +1,10 @@
 import os
 import json
 import subprocess
+import hashlib
 from pathlib import Path
 from flask import Flask, request, Response, redirect
+
 from unidecode import unidecode
 import requests
 
@@ -10,46 +12,60 @@ app = Flask(__name__)
 
 # Paths
 BASE_DIR = Path("/mnt/data/ytmp3")
-BASE_DIR.mkdir(exist_ok=True)
+BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Environment
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "/mnt/data/youtube_cookies.txt")
-FIXED_USER_AGENT = "Mozilla/5.0"
 TITLE_CACHE = BASE_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
+
+# Environment variables for cookies
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "/mnt/data/youtube_cookies.txt")
+XYLEM_COOKIES = os.getenv("XYLEM_COOKIES", "/mnt/data/xylem_cookies.txt")
 
 # Utils
 def safe_filename(name):
     return "".join(c if c.isalnum() or c in " .-" else "_" for c in unidecode(name)).strip()
 
-def save_title(vid, title):
+def save_title(key, title):
     cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
-    cache[vid] = title
+    cache[key] = title
     TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
-def load_title(vid):
+def load_title(key):
     try:
-        return json.loads(TITLE_CACHE.read_text(encoding="utf-8")).get(vid, vid)
+        return json.loads(TITLE_CACHE.read_text(encoding="utf-8")).get(key, key)
     except Exception:
-        return vid
+        return key
 
-def get_files():
-    # Glob all files in BASE_DIR (fix from glob(".") to glob("*"))
-    return {f.stem.split("_")[0]: f for f in BASE_DIR.glob("*")}
+def url_to_key(url):
+    return hashlib.md5(url.encode("utf-8")).hexdigest()
 
-# Home + Search + Direct form
+def get_cached_files():
+    files = {}
+    for f in BASE_DIR.glob("*"):
+        stem = f.stem
+        key = stem.split("_")[0]
+        files[key] = f
+    return files
+
+def choose_cookies(url):
+    if "youtube.com" in url or "youtu.be" in url:
+        return YOUTUBE_COOKIES
+    # Extend domain checks here if needed
+    return XYLEM_COOKIES
+
+# Routes
 @app.route("/", methods=["GET"])
 def home():
     form = """
-    <h2>YouTube Downloader</h2>
+    <h2>YouTube Search + Generic Video Downloader</h2>
     <form method='get' action='/search'>
         <input name='q' placeholder='Search YouTube...' style='width:60%; padding:10px;'/>
         <button type='submit'>Search</button>
     </form><br>
     <form method='post' action='/direct'>
-        <input name='video_url' placeholder='Paste YouTube URL' style='width:60%; padding:10px;'/>
+        <input name='video_url' placeholder='Paste any video URL' style='width:60%; padding:10px;' required/>
         <select name='format'>
             <option value='mp3'>MP3</option>
             <option value='mp4'>MP4</option>
@@ -61,16 +77,16 @@ def home():
     <ul>
     """
     items = ""
-    for vid, file in get_files().items():
-        title = load_title(vid)
-        items += f"<li>{title} — <a href='/download?q={vid}&fmt=mp3'>MP3</a> | <a href='/download?q={vid}&fmt=mp4'>MP4</a></li>"
+    cached_files = get_cached_files()
+    for key, file in cached_files.items():
+        title = load_title(key)
+        items += f"<li>{title} — <a href='/download?q={key}&fmt=mp3'>MP3</a> | <a href='/download?q={key}&fmt=mp4'>MP4</a></li>"
     return f"<html><body>{form}{items}</ul></body></html>"
 
-# Search
 @app.route("/search")
 def search():
     q = request.args.get("q", "")
-    if not q:
+    if not q or not YOUTUBE_API_KEY:
         return redirect("/")
     r = requests.get(
         "https://www.googleapis.com/youtube/v3/search",
@@ -93,34 +109,48 @@ def search():
             <li>
                 <img src='{thumb_url}' width='120' height='90'><br>
                 <b>{title}</b><br>
-                <a href='/download?q={vid}&fmt=mp3'>MP3</a> | <a href='/download?q={vid}&fmt=mp4'>MP4</a>
+                <a href='/download?q={vid}&fmt=mp3'>MP3</a> |
+                <a href='/download?q={vid}&fmt=mp4'>MP4</a>
             </li>
             """
+    else:
+        html += "<li>Failed to fetch results</li>"
     html += "</ul><a href='/'>Back</a>"
     return html
 
-# Direct paste URL
 @app.route("/direct", methods=["POST"])
 def direct():
     url = request.form.get("video_url")
     fmt = request.form.get("format", "mp3")
+    if not url:
+        return "No URL provided", 400
+
+    cookies_file = choose_cookies(url)
+
     try:
-        vid = subprocess.check_output(
-            ["yt-dlp", "--cookies", YOUTUBE_COOKIES, "--get-id", url], text=True
-        ).strip()
         title = subprocess.check_output(
-            ["yt-dlp", "--cookies", YOUTUBE_COOKIES, "--get-title", url], text=True
+            ["yt-dlp", "--cookies", cookies_file, "--get-title", url], text=True
         ).strip()
-        save_title(vid, title)
+
+        if "youtube.com/watch" in url or "youtu.be/" in url:
+            vid = subprocess.check_output(
+                ["yt-dlp", "--cookies", cookies_file, "--get-id", url], text=True
+            ).strip()
+            key = vid
+        else:
+            key = url_to_key(url)
+
+        save_title(key, title)
         ext = ".mp3" if fmt == "mp3" else ".mp4"
-        out_path = BASE_DIR / f"{vid}_{safe_filename(title)}{ext}"
+        out_path = BASE_DIR / f"{key}_{safe_filename(title)}{ext}"
+
         if not out_path.exists():
             if fmt == "mp3":
                 subprocess.run(
                     [
                         "yt-dlp",
                         "--cookies",
-                        YOUTUBE_COOKIES,
+                        cookies_file,
                         "-x",
                         "--audio-format",
                         "mp3",
@@ -135,9 +165,9 @@ def direct():
                     [
                         "yt-dlp",
                         "--cookies",
-                        YOUTUBE_COOKIES,
+                        cookies_file,
                         "-f",
-                        "best[ext=mp4]",
+                        "bestvideo+bestaudio/best",
                         "--recode-video",
                         "mp4",
                         "-o",
@@ -147,53 +177,25 @@ def direct():
                     check=True,
                 )
         return redirect("/")
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         return f"Download failed: {e}", 500
+    except Exception as e:
+        return f"Error: {e}", 500
 
-# Download (auto download if missing)
 @app.route("/download")
 def download():
-    vid = request.args.get("q")
+    key = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
-    title = safe_filename(load_title(vid))
+    if not key:
+        return "Missing parameter q", 400
+
+    title = safe_filename(load_title(key))
     ext = ".mp3" if fmt == "mp3" else ".mp4"
-    path = BASE_DIR / f"{vid}_{title}{ext}"
+    path = BASE_DIR / f"{key}_{title}{ext}"
+
     if not path.exists():
-        url = f"https://www.youtube.com/watch?v={vid}"
-        try:
-            if fmt == "mp3":
-                subprocess.run(
-                    [
-                        "yt-dlp",
-                        "--cookies",
-                        YOUTUBE_COOKIES,
-                        "-x",
-                        "--audio-format",
-                        "mp3",
-                        "-o",
-                        str(path.with_suffix(".%(ext)s")),
-                        url,
-                    ],
-                    check=True,
-                )
-            else:
-                subprocess.run(
-                    [
-                        "yt-dlp",
-                        "--cookies",
-                        YOUTUBE_COOKIES,
-                        "-f",
-                        "best[ext=mp4]",
-                        "--recode-video",
-                        "mp4",
-                        "-o",
-                        str(path.with_suffix(".%(ext)s")),
-                        url,
-                    ],
-                    check=True,
-                )
-        except Exception as e:
-            return f"Download failed: {e}", 500
+        return "File not found. Please download it first.", 404
+
     mimetype = "audio/mpeg" if fmt == "mp3" else "video/mp4"
     return Response(path.open("rb"), mimetype=mimetype)
 
