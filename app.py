@@ -77,15 +77,10 @@ def download_thumbnail(video_id):
 @app.route("/")
 def index():
     search_form = """
-    <div style='text-align:center; margin-top:30px;'>
-        <form method='get' action='/search'>
-            <input type='text' name='q' placeholder='Search YouTube...'
-                   style='width:60%; padding:12px; font-size:18px; border-radius:8px; border:1px solid #ccc;'>
-            <input type='submit' value='Search'
-                   style='padding:12px 20px; font-size:18px; border-radius:8px; margin-left:10px;'>
-        </form>
-    </div><br>
-    """
+    <form method='get' action='/search'>
+        <input type='text' name='q' placeholder='Search YouTube...'>
+        <input type='submit' value='Search'>
+    </form><br>"""
 
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
@@ -145,16 +140,10 @@ def search():
     html = f"""
     <html><head><title>Search results for '{query}'</title></head>
     <body style='font-family:sans-serif;'>
-    <div style='text-align:center; margin-top:30px;'>
-        <form method='get' action='/search'>
-            <input type='text' name='q' value='{query}' placeholder='Search YouTube...'
-                   style='width:60%; padding:12px; font-size:18px; border-radius:8px; border:1px solid #ccc;'>
-            <input type='submit' value='Search'
-                   style='padding:12px 20px; font-size:18px; border-radius:8px; margin-left:10px;'>
-        </form>
-    </div>
-    <a href='/' style='display:block; text-align:center; margin-top:20px;'>Home</a>
-    <br><br><h3>Search results for '{query}'</h3>"""
+    <form method='get' action='/search'>
+        <input type='text' name='q' value='{query}' placeholder='Search YouTube'>
+        <input type='submit' value='Search'>
+    </form><a href='/'>Home</a><br><br><h3>Search results for '{query}'</h3>"""
 
     if r.ok:
         results = r.json().get("items", [])
@@ -166,10 +155,8 @@ def search():
             <div style='margin-bottom:10px; font-size:small;'>
                 <img src='/thumb/{video_id}' width='120' height='90'><br>
                 <b>{title}</b><br>
-                <a href='/details/{video_id}'>View Details</a> |
-<a href='/download?q={quote_plus(video_id)}&fmt=mp3'>MP3</a> |
-<a href='/download?q={quote_plus(video_id)}&fmt=mp4'>MP4</a>
-
+                <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>Download MP3</a> |
+                <a href='/download?q={quote_plus(video_id)}&fmt=mp4'>Download MP4</a>
             </div>"""
         if results:
             set_last_video(results[0]["id"]["videoId"])
@@ -196,68 +183,6 @@ def download():
         return "Missing video ID", 400
     return redirect(url_for("ready", q=video_id, fmt=fmt))
 
-@app.route("/details/<video_id>")
-def details(video_id):
-    # Fetch video details
-    details_res = requests.get(
-        "https://www.googleapis.com/youtube/v3/videos", params={
-            "key": YOUTUBE_API_KEY,
-            "id": video_id,
-            "part": "snippet,statistics"
-        }
-    )
-    details_data = details_res.json()["items"][0] if details_res.ok and details_res.json()["items"] else None
-
-    # Fetch related videos
-    related_res = requests.get(
-        "https://www.googleapis.com/youtube/v3/search", params={
-            "key": YOUTUBE_API_KEY,
-            "relatedToVideoId": video_id,
-            "type": "video",
-            "part": "snippet",
-            "maxResults": 10
-        }
-    )
-    related_items = related_res.json().get("items", []) if related_res.ok else []
-
-    if not details_data:
-        return "Video not found", 404
-
-    title = details_data["snippet"]["title"]
-    save_title(video_id, title)
-
-    content = f"""
-    <html><head><title>{title}</title></head><body style='font-family:sans-serif;'>
-    <a href='/' style='display:block; margin-bottom:20px;'>Home</a>
-    <h2>{title}</h2>
-    <img src='/thumb/{video_id}' width='320'><br>
-    <p>{details_data["snippet"]["description"][:500]}...</p>
-    <p>Views: {details_data["statistics"].get("viewCount", "N/A")}</p>
-    <p>Channel: {details_data["snippet"]["channelTitle"]}</p>
-    <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
-    <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a>
-    <hr>
-    <h3>Related Videos</h3>
-    """
-
-    for item in related_items:
-        rid = item["id"]["videoId"]
-        rtitle = item["snippet"]["title"]
-        save_title(rid, rtitle)
-        content += f"""
-        <div style='margin-bottom:10px; font-size:small;'>
-            <img src='/thumb/{rid}' width='120' height='90'><br>
-            <b>{rtitle}</b><br>
-            <a href='/details/{rid}'>View Details</a> |
-            <a href='/download?q={rid}&fmt=mp3'>MP3</a> |
-            <a href='/download?q={rid}&fmt=mp4'>MP4</a>
-        </div>"""
-
-    content += "</body></html>"
-    return content
-
-
-
 @app.route("/ready")
 def ready():
     video_id = request.args.get("q")
@@ -274,14 +199,11 @@ def ready():
             return "Cookies file missing", 400
 
         try:
-            output = subprocess.check_output([
-                "yt-dlp", "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
+            info = subprocess.check_output([
+                "yt-dlp", "--print", "%(title)s\n%(uploader)s\n%(upload_date)s",
                 "--cookies", cookies_path, url
-            ], text=True).strip()
-            parts = output.split("|||")
-            if len(parts) != 3:
-                raise ValueError("Unexpected metadata format.")
-            video_title, uploader, upload_date = parts
+            ], text=True).strip().split("\n")
+            video_title, uploader, upload_date = info
             album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
         except Exception as e:
             logging.error(f"Metadata extraction failed: {e}")
