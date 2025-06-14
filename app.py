@@ -96,6 +96,7 @@ def index():
             <b>{title}</b><br>
             <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
             <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a> |
+            <a href='/download?q={video_id}&fmt=3gp'>Download 3GP</a> |
             <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
         </div>"""
 
