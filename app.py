@@ -406,7 +406,7 @@ def ready():
                     "-r", "15",                        # Framerate
                     "-c:v", "mpeg4",                  # Video codec
                     "-b:v", "128k",                   # Video bitrate
-                    "-c:a", "libfaac",                # Audio codec
+                    "-c:a", "aac",                # Audio codec
                     "-b:a", "32k",                    # Audio bitrate
                     "-f", "3gp",                      # Force 3GP format
                     "-movflags", "faststart",         # Enable streaming
