@@ -168,8 +168,8 @@ def search():
                 <b>{title}</b><br>
                 <a href='/details/{video_id}'>View Details</a> |
 <a href='/download?q={quote_plus(video_id)}&fmt=mp3'>MP3</a> |
-<a href='/download?q={quote_plus(video_id)}&fmt=mp4'>MP4</a>
-
+<a href='/download?q={quote_plus(video_id)}&fmt=mp4'>MP4</a> |
+<a href='/download?q={quote_plus(video_id)}&fmt=3gp'>3GP</a>
             </div>"""
         if results:
             set_last_video(results[0]["id"]["videoId"])
