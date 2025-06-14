@@ -99,8 +99,8 @@ def index():
 
     formats = {"mp3": "MP3", "mp4": "MP4", "3gp": "3GP"}
     for f in formats:
-        if any(file.name.endswith(f".{f}") for file in files):
-            content += f"<a href='/download?q={video_id}&fmt={f}'>Download {formats[f]}</a> | "
+    if any(file.name.endswith(f".{f}") for file in files):
+        content += f"<a href='/download?q={video_id}&fmt={f}'>Download {formats[f]}</a> | "
     content += f"<a href='/remove?q={video_id}' style='color:red;'>Remove</a></div>"
 
     last_video = get_last_video()
