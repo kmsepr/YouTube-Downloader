@@ -304,23 +304,32 @@ def ready():
                 "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
             ]
        elif fmt == "3gp":
-            intermediate_mp4 = temp_path.with_suffix(".mp4")
+            intermediate_mp4 =  
+           temp_path.with_suffix(".mp4")
            cmd = base_cmd + [
-                "-f", "best[ext=mp4]/best",
-                "-o", str(intermediate_mp4)
+                "-f", "best[ext=mp4]/  
+                  best",
+                "-o",    
+            str(intermediate_mp4)
             ]
         else:
-            return "Unsupported format", 400
+            return "Unsupported format",  
+            400
 
-        try:
-            subprocess.run(cmd, check=True)
+           try:
+            subprocess.run(cmd, 
+            check=True)
 
-            if fmt == "3gp":
+          if fmt == "3gp":
                 subprocess.run([
-                    "ffmpeg", "-y", "-i", str(intermediate_mp4),
-                    "-vf", "scale=240:320", "-r", "12",
-                    "-c:v", "mpeg4", "-b:v", "256k",
-                    "-c:a", "aac", "-b:a", "24k",
+                    "ffmpeg", "-y", "-i",   
+          str(intermediate_mp4),
+                    "-vf",   
+            "scale=240:320", "-r", "12",
+                    "-c:v", "mpeg4",     
+            "-b:v", "256k",
+                    "-c:a", "aac", "-b:a",    
+                  "24k",
                     str(final_path)
                 ], check=True)
                 intermediate_mp4.unlink()
