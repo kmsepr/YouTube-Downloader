@@ -54,11 +54,13 @@ def get_last_video():
     return LAST_VIDEO_FILE.read_text().strip() if LAST_VIDEO_FILE.exists() else None
 
 def get_unique_video_ids():
-    files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4"))
+    files = list(BASE_DIR.glob("*.mp3")) + list(BASE_DIR.glob("*.mp4")) + list(BASE_DIR.glob("*.3gp"))
     unique_ids = {}
     for file in files:
         vid = file.stem.split("_")[0]
-        unique_ids.setdefault(vid, file)
+        if vid not in unique_ids:
+            unique_ids[vid] = []
+        unique_ids[vid].append(file)
     return unique_ids
 
 def download_thumbnail(video_id):
@@ -88,16 +90,18 @@ def index():
     """
 
     content = "<h3>Cached Files</h3>"
-    for video_id, file in get_unique_video_ids().items():
-        title = load_title(video_id)
-        content += f"""
-        <div style='margin-bottom:10px; font-size:small;'>
-            <img src='/thumb/{video_id}' width='120' height='90'><br>
-            <b>{title}</b><br>
-            <a href='/download?q={video_id}&fmt=mp3'>Download MP3</a> |
-            <a href='/download?q={video_id}&fmt=mp4'>Download MP4</a> |
-            <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
-        </div>"""
+    for video_id, files in get_unique_video_ids().items():
+    title = load_title(video_id)
+    content += f"""
+    <div style='margin-bottom:10px; font-size:small;'>
+        <img src='/thumb/{video_id}' width='120' height='90'><br>
+        <b>{title}</b><br>"""
+
+    formats = {"mp3": "MP3", "mp4": "MP4", "3gp": "3GP"}
+    for f in formats:
+        if any(file.name.endswith(f".{f}") for file in files):
+            content += f"<a href='/download?q={video_id}&fmt={f}'>Download {formats[f]}</a> | "
+    content += f"<a href='/remove?q={video_id}' style='color:red;'>Remove</a></div>"
 
     last_video = get_last_video()
     if last_video:
@@ -263,7 +267,8 @@ def ready():
     video_id = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
     title = safe_filename(load_title(video_id))
-    ext = "mp3" if fmt == "mp3" else "mp4"
+
+    ext = "mp3" if fmt == "mp3" else ("mp4" if fmt == "mp4" else "3gp")
     final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
     temp_path = TEMP_DIR / f"{video_id}_{title}.{ext}"
 
@@ -292,13 +297,23 @@ def ready():
             "--user-agent", FIXED_USER_AGENT, "--cookies", cookies_path, url
         ]
 
-        cmd = base_cmd + (
-            ["-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
-             "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"]
-            if fmt == "mp3" else
-            ["-f", "best[ext=mp4]", "--recode-video", "mp4",
-             "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"]
-        )
+        if fmt == "mp3":
+            cmd = base_cmd + [
+                "-f", "bestaudio", "--extract-audio", "--audio-format", "mp3",
+                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"
+            ]
+        elif fmt == "mp4":
+            cmd = base_cmd + [
+                "-f", "best[ext=mp4]", "--recode-video", "mp4",
+                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
+            ]
+        elif fmt == "3gp":
+            cmd = base_cmd + [
+                "-f", "18", "--recode-video", "3gp",
+                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 256k -b:a 32k"
+            ]
+        else:
+            return "Unsupported format", 400
 
         try:
             subprocess.run(cmd, check=True)
@@ -334,8 +349,8 @@ def ready():
             logging.error(f"Download failed for {video_id}: {e}")
             return "Download failed", 500
 
-    return Response(final_path.open("rb"),
-                    mimetype="audio/mpeg" if fmt == "mp3" else "video/mp4")
+    mimetype = "audio/mpeg" if fmt == "mp3" else ("video/3gpp" if fmt == "3gp" else "video/mp4")
+    return Response(final_path.open("rb"), mimetype=mimetype)
 
 @app.route("/remove")
 def remove():
