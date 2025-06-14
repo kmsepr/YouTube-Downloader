@@ -347,18 +347,19 @@ def ready():
             output = subprocess.check_output([
                 "yt-dlp", 
                 "--cookies", str(COOKIES_PATH),
-                "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
+                "--print", "%(title)s|||%(uploader)s|||%(duration)s|||%(upload_date)s",
                 url
             ], text=True, stderr=subprocess.PIPE).strip()
             parts = output.split("|||")
-            if len(parts) != 3:
+            if len(parts) != 4:
                 raise ValueError("Unexpected metadata format")
-            video_title, uploader, upload_date = parts
+            video_title, uploader, duration, upload_date = parts
             album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
         except Exception as e:
             logging.error(f"Metadata extraction failed: {e}")
             video_title = title
             uploader = "Unknown"
+            duration = "0"
             album_date = datetime.now().strftime("%B %Y")
 
         base_cmd = [
@@ -395,17 +396,24 @@ def ready():
             # Download the video
             subprocess.run(cmd, check=True, stderr=subprocess.PIPE)
 
-            # For 3GP format, convert the downloaded MP4
+            # Special handling for 3GP format
             if fmt == "3gp":
+                # Convert to proper 3GP with correct parameters
                 subprocess.run([
                     "ffmpeg", "-y",
                     "-i", str(intermediate_mp4),
-                    "-vf", "scale=240:320",
-                    "-r", "12",
-                    "-c:v", "mpeg4",
-                    "-b:v", "256k",
-                    "-c:a", "aac",
-                    "-b:a", "24k",
+                    "-vf", "scale=176:144,setsar=1:1",  # Standard 3GP resolution
+                    "-r", "15",                        # Framerate
+                    "-c:v", "mpeg4",                  # Video codec
+                    "-b:v", "128k",                   # Video bitrate
+                    "-c:a", "libfaac",                # Audio codec
+                    "-b:a", "32k",                    # Audio bitrate
+                    "-f", "3gp",                      # Force 3GP format
+                    "-movflags", "faststart",         # Enable streaming
+                    "-metadata", f"title={video_title}",
+                    "-metadata", f"artist={uploader}",
+                    "-metadata", f"album={album_date}",
+                    "-metadata", f"duration={duration}",
                     str(final_path)
                 ], check=True, stderr=subprocess.PIPE)
                 intermediate_mp4.unlink(missing_ok=True)
