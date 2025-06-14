@@ -429,7 +429,7 @@ def ready():
                 subprocess.run([
                     "ffmpeg", "-y",
                     "-i", str(intermediate_mp4),
-                    "-vf", "scale=176:144,setsar=1:1",
+                    "-vf", "scale=320:240,setsar=1:1",
                     "-r", "15",
                     "-c:v", "mpeg4", "-profile:v", "0", "-b:v", "128k",
                     "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "32k",
