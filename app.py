@@ -427,24 +427,18 @@ def ready():
                 ], check=True, stderr=subprocess.PIPE)
 
                 subprocess.run([
-    "ffmpeg", "-y",
-    "-i", str(intermediate_mp4),
-    "-vf", "scale=240:320,setsar=1:1",  # resolution for vertical format
-    "-r", "15",                         # frame rate
-    "-c:v", "mpeg4",
-    "-profile:v", "0",
-    "-b:v", "200k",
-    "-c:a", "aac",
-    "-ar", "22050",
-    "-ac", "1",
-    "-b:a", "64k",
-    "-f", "3gp",
-    "-movflags", "+faststart",
-    "-metadata", f"title={video_title}",
-    "-metadata", f"artist={uploader}",
-    "-metadata", f"album={album_date}",
-    str(final_path)
-], check=True, stderr=subprocess.PIPE)
+                    "ffmpeg", "-y",
+                    "-i", str(intermediate_mp4),
+                    "-vf", "scale=176:144,setsar=1:1",
+                    "-r", "15",
+                    "-c:v", "mpeg4", "-profile:v", "0", "-b:v", "128k",
+                    "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "32k",
+                    "-f", "3gp", "-movflags", "faststart",
+                    "-metadata", f"title={video_title}",
+                    "-metadata", f"artist={uploader}",
+                    "-metadata", f"album={album_date}",
+                    str(final_path)
+                ], check=True, stderr=subprocess.PIPE)
                 intermediate_mp4.unlink(missing_ok=True)
 
             else:
