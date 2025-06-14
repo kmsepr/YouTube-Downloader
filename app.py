@@ -327,10 +327,10 @@ def details(video_id):
 def ready():
     video_id = request.args.get("q")
     fmt = request.args.get("fmt", "mp3")
-    
+
     if not video_id:
         return "Missing video ID", 400
-    
+
     if not check_cookies():
         return "Valid cookies file required", 400
 
@@ -342,7 +342,7 @@ def ready():
     if not final_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        # Get video metadata with cookies
+        # Metadata extraction
         try:
             output = subprocess.check_output([
                 "yt-dlp", 
@@ -370,96 +370,88 @@ def ready():
             url
         ]
 
-        if fmt == "mp3":
-            cmd = base_cmd + [
-                "-f", "bestaudio",
-                "--extract-audio",
-                "--audio-format", "mp3",
-                "--postprocessor-args", "-ar 22050 -ac 1 -b:a 24k"
-            ]
-        elif fmt == "mp4":
-            cmd = base_cmd + [
-                "-f", "best[ext=mp4]",
-                "--recode-video", "mp4",
-                "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 12k"
-            ]
-        elif fmt == "3gp":
-            intermediate_mp4 = TEMP_DIR / f"{video_id}_{title}.mp4"
-            cmd = base_cmd + [
-                "-f", "best[ext=mp4]/best",
-                "-o", str(intermediate_mp4)
-            ]
-        else:
-            return "Unsupported format", 400
-
         try:
-            # Download the video
-            subprocess.run(cmd, check=True, stderr=subprocess.PIPE)
-
-            # Special handling for 3GP format
-            if fmt == "3gp":
-                # Convert to proper 3GP with correct parameters
-                subprocess.run([
-                    "ffmpeg", "-y",
-                    "-i", str(intermediate_mp4),
-                    "-vf", "scale=176:144,setsar=1:1",  # Standard 3GP resolution
-                    "-r", "15",                        # Framerate
-                    "-c:v", "mpeg4",                  # Video codec
-                    "-b:v", "128k",                   # Video bitrate
-                    "-c:a", "aac",                # Audio codec
-                    "-b:a", "32k",                    # Audio bitrate
-                    "-f", "3gp",                      # Force 3GP format
-                    "-movflags", "faststart",         # Enable streaming
-                    "-metadata", f"title={video_title}",
-                    "-metadata", f"artist={uploader}",
-                    "-metadata", f"album={album_date}",
-                    "-metadata", f"duration={duration}",
-                    str(final_path)
+            if fmt == "mp3":
+                # Download audio only
+                subprocess.run(base_cmd + [
+                    "-f", "bestaudio",
+                    "--extract-audio",
+                    "--audio-format", "mp3",
+                    "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
                 ], check=True, stderr=subprocess.PIPE)
-                intermediate_mp4.unlink(missing_ok=True)
 
-            # For MP3, add metadata and thumbnail
-            if fmt == "mp3" and temp_path.exists():
+                # Embed thumbnail and metadata
                 thumb = download_thumbnail(video_id)
+                final_with_meta = TEMP_DIR / f"{title}_with_art.mp3"
                 if thumb and thumb.exists():
-                    final_with_art = TEMP_DIR / f"{title}_with_art.mp3"
                     subprocess.run([
                         "ffmpeg", "-y",
                         "-i", str(temp_path),
                         "-i", str(thumb),
-                        "-map", "0",
-                        "-map", "1",
-                        "-c", "copy",
+                        "-map", "0:a", "-map", "1",
+                        "-c:a", "libmp3lame", "-b:a", "40k",
                         "-id3v2_version", "3",
                         "-metadata", f"title={video_title}",
                         "-metadata", f"artist={uploader}",
                         "-metadata", f"album={album_date}",
                         "-metadata:s:v", "title=Album cover",
                         "-metadata:s:v", "comment=Cover (front)",
-                        str(final_with_art)
+                        str(final_with_meta)
                     ], check=True, stderr=subprocess.PIPE)
-                    shutil.move(str(final_with_art), str(final_path))
+                    shutil.move(str(final_with_meta), str(final_path))
                 else:
                     subprocess.run([
                         "ffmpeg", "-y",
                         "-i", str(temp_path),
+                        "-c:a", "libmp3lame", "-b:a", "40k",
                         "-metadata", f"title={video_title}",
                         "-metadata", f"artist={uploader}",
                         "-metadata", f"album={album_date}",
                         str(final_path)
                     ], check=True, stderr=subprocess.PIPE)
                 temp_path.unlink(missing_ok=True)
-            elif temp_path.exists():
+
+            elif fmt == "mp4":
+                subprocess.run(base_cmd + [
+                    "-f", "best[ext=mp4]",
+                    "--recode-video", "mp4",
+                    "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 32k"
+                ], check=True, stderr=subprocess.PIPE)
                 shutil.move(str(temp_path), str(final_path))
 
+            elif fmt == "3gp":
+                intermediate_mp4 = TEMP_DIR / f"{video_id}_{title}.mp4"
+                subprocess.run(base_cmd + [
+                    "-f", "best[ext=mp4]/best",
+                    "-o", str(intermediate_mp4)
+                ], check=True, stderr=subprocess.PIPE)
+
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-i", str(intermediate_mp4),
+                    "-vf", "scale=176:144,setsar=1:1",
+                    "-r", "15",
+                    "-c:v", "mpeg4", "-profile:v", "0", "-b:v", "128k",
+                    "-c:a", "aac", "-ar", "22050", "-ac", "1", "-b:a", "32k",
+                    "-f", "3gp", "-movflags", "faststart",
+                    "-metadata", f"title={video_title}",
+                    "-metadata", f"artist={uploader}",
+                    "-metadata", f"album={album_date}",
+                    str(final_path)
+                ], check=True, stderr=subprocess.PIPE)
+                intermediate_mp4.unlink(missing_ok=True)
+
+            else:
+                return "Unsupported format", 400
+
         except subprocess.CalledProcessError as e:
-            logging.error(f"Download failed for {video_id}: {e.stderr}")
+            logging.error(f"FFmpeg or yt-dlp failed:\n{e.stderr.decode(errors='ignore')}")
             return "Download failed", 500
         except Exception as e:
             logging.error(f"Unexpected error during download: {e}")
             return "Download failed", 500
 
-    # Serve the file
+    # Serve file
     mimetype = {
         "mp3": "audio/mpeg",
         "mp4": "video/mp4",
