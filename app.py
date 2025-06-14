@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, Response, redirect, url_for
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote
 import requests
 from unidecode import unidecode
 
@@ -16,6 +16,7 @@ app = Flask(__name__)
 BASE_DIR = Path("/mnt/data/ytmp3")
 TEMP_DIR = Path("/mnt/data/temp")
 THUMB_DIR = Path("/mnt/data/thumbs")
+COOKIES_PATH = Path("/mnt/data/cookies.txt")
 
 for folder in [BASE_DIR, TEMP_DIR, THUMB_DIR]:
     folder.mkdir(exist_ok=True, parents=True)
@@ -31,14 +32,26 @@ FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 logging.basicConfig(level=logging.DEBUG)
 
 # Utilities
+def clean_title(title):
+    """Clean and decode a title string"""
+    try:
+        decoded = unquote(str(title))
+        ascii_text = unidecode(decoded)
+        clean_text = "".join(c if c.isalnum() or c in " .,-_" else " " for c in ascii_text)
+        return " ".join(clean_text.split()).strip()
+    except Exception as e:
+        logging.error(f"Failed to clean title '{title}': {e}")
+        return "untitled"
+
 def safe_filename(name):
-    name = unidecode(name)
-    return "".join(c if c.isalnum() or c in " .-" else "_" for c in name).strip()
+    """Convert a string to a safe filename"""
+    clean = clean_title(name)
+    return "".join(c if c.isalnum() or c in "_-" else "_" for c in clean)
 
 def save_title(video_id, title):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
-        cache[video_id] = title
+        cache[video_id] = clean_title(title)
         TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logging.error(f"Failed to save title: {e}")
@@ -84,6 +97,16 @@ def download_thumbnail(video_id):
         logging.warning(f"Thumbnail download failed for {video_id}: {e}")
     return None
 
+def check_cookies():
+    """Verify cookies file exists and is valid"""
+    if not COOKIES_PATH.exists():
+        logging.error("Cookies file not found at %s", COOKIES_PATH)
+        return False
+    if COOKIES_PATH.stat().st_size == 0:
+        logging.error("Cookies file is empty at %s", COOKIES_PATH)
+        return False
+    return True
+
 # Routes
 @app.route("/")
 def index():
@@ -101,7 +124,6 @@ def index():
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
         title = load_title(video_id)
-        file_type = file.suffix[1:]
         content += f"""
         <div style='margin-bottom:10px; font-size:small;'>
             <img src='/thumb/{video_id}' width='120' height='90'><br>
@@ -128,7 +150,7 @@ def index():
                 content += "<h3>Related to Your Last Search</h3>"
                 for item in related:
                     vid = item["id"]["videoId"]
-                    title = item["snippet"]["title"]
+                    title = clean_title(item["snippet"]["title"])
                     save_title(vid, title)
                     content += f"""
                     <div style='margin-bottom:10px; font-size:small;'>
@@ -175,7 +197,7 @@ def search():
             results = r.json().get("items", [])
             for item in results:
                 video_id = item["id"]["videoId"]
-                title = item["snippet"]["title"]
+                title = clean_title(item["snippet"]["title"])
                 save_title(video_id, title)
                 html += f"""
                 <div style='margin-bottom:10px; font-size:small;'>
@@ -238,7 +260,7 @@ def details(video_id):
             return "Video not found", 404
             
         details_data = details_res.json()["items"][0]
-        title = details_data["snippet"]["title"]
+        title = clean_title(details_data["snippet"]["title"])
         save_title(video_id, title)
 
         # Fetch related videos
@@ -283,7 +305,7 @@ def details(video_id):
 
         for item in related_items:
             rid = item["id"]["videoId"]
-            rtitle = item["snippet"]["title"]
+            rtitle = clean_title(item["snippet"]["title"])
             save_title(rid, rtitle)
             content += f"""
             <div style='margin-bottom:10px; font-size:small;'>
@@ -309,6 +331,9 @@ def ready():
     if not video_id:
         return "Missing video ID", 400
     
+    if not check_cookies():
+        return "Valid cookies file required", 400
+
     title = safe_filename(load_title(video_id))
     ext = fmt if fmt in ["mp3", "mp4", "3gp"] else "mp3"
     final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
@@ -316,16 +341,14 @@ def ready():
 
     if not final_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
-        cookies_path = "/mnt/data/cookies.txt"
-        
-        if not Path(cookies_path).exists():
-            return "Cookies file missing", 400
 
-        # Get video metadata
+        # Get video metadata with cookies
         try:
             output = subprocess.check_output([
-                "yt-dlp", "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
-                "--cookies", cookies_path, url
+                "yt-dlp", 
+                "--cookies", str(COOKIES_PATH),
+                "--print", "%(title)s|||%(uploader)s|||%(upload_date)s",
+                url
             ], text=True, stderr=subprocess.PIPE).strip()
             parts = output.split("|||")
             if len(parts) != 3:
@@ -340,9 +363,9 @@ def ready():
 
         base_cmd = [
             "yt-dlp",
+            "--cookies", str(COOKIES_PATH),
             "--output", str(temp_path.with_suffix(".%(ext)s")),
             "--user-agent", FIXED_USER_AGENT,
-            "--cookies", cookies_path,
             url
         ]
 
@@ -372,7 +395,7 @@ def ready():
             # Download the video
             subprocess.run(cmd, check=True, stderr=subprocess.PIPE)
 
-            # For 3GP format, we need to convert the downloaded MP4
+            # For 3GP format, convert the downloaded MP4
             if fmt == "3gp":
                 subprocess.run([
                     "ffmpeg", "-y",
