@@ -398,7 +398,7 @@ def ready():
     if not check_cookies():
         return "Valid cookies file required", 400
 
-    title = safe_filename(load_title(video_id))
+    title = load_title(video_id)  # keep full Unicode title
     ext = fmt if fmt in ["mp3", "mp4", "3gp"] else "mp3"
     final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
     temp_path = TEMP_DIR / f"{video_id}_{title}.{ext}"
@@ -538,7 +538,7 @@ def ready():
         mimetype=mimetype,
         headers={
             "Content-Disposition": f"attachment; filename={final_path.name}",
-            "Content-Length": str(final_path.stat().st_size)  # 👈 Add this line
+            "Content-Length": str(final_path.stat().st_size)  
         }
     )
 
