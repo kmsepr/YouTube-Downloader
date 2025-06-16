@@ -25,13 +25,54 @@ TITLE_CACHE = BASE_DIR / "title_cache.json"
 if not TITLE_CACHE.exists():
     TITLE_CACHE.write_text("{}", encoding="utf-8")
 
+# New status tracking system
+STATUS_CACHE = BASE_DIR / "status_cache.json"
+if not STATUS_CACHE.exists():
+    STATUS_CACHE.write_text("{}", encoding="utf-8")
+
 LAST_VIDEO_FILE = BASE_DIR / "last_video.txt"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 FIXED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 logging.basicConfig(level=logging.DEBUG)
 
-# Utilities
+# Status tracking functions
+def update_status(video_id, fmt, status, progress=0):
+    """Update the status of a download operation"""
+    try:
+        status_data = json.loads(STATUS_CACHE.read_text(encoding="utf-8"))
+        if video_id not in status_data:
+            status_data[video_id] = {}
+        
+        status_data[video_id][fmt] = {
+            "status": status,
+            "progress": progress,
+            "timestamp": datetime.now().isoformat()
+        }
+        STATUS_CACHE.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
+    except Exception as e:
+        logging.error(f"Failed to update status: {e}")
+
+def get_status(video_id):
+    """Get the current status of downloads for a video"""
+    try:
+        status_data = json.loads(STATUS_CACHE.read_text(encoding="utf-8"))
+        return status_data.get(video_id, {})
+    except Exception as e:
+        logging.error(f"Failed to get status: {e}")
+        return {}
+
+def clear_status(video_id):
+    """Clear status entries for a video"""
+    try:
+        status_data = json.loads(STATUS_CACHE.read_text(encoding="utf-8"))
+        if video_id in status_data:
+            del status_data[video_id]
+            STATUS_CACHE.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
+    except Exception as e:
+        logging.error(f"Failed to clear status: {e}")
+
+# Original utility functions
 def clean_title(title):
     """Clean and decode a title string"""
     try:
@@ -124,15 +165,44 @@ def index():
     content = "<h3>Cached Files</h3>"
     for video_id, file in get_unique_video_ids().items():
         title = load_title(video_id)
+        status = get_status(video_id)
+        
+        # Generate status display
+        status_display = []
+        for fmt in ["mp3", "mp4", "3gp"]:
+            fmt_status = status.get(fmt, {})
+            if file.suffix[1:] == fmt:
+                status_display.append(f"{fmt.upper()}: ✅ Completed (100%)")
+            elif fmt in status:
+                if fmt_status.get("status") == "failed":
+                    status_display.append(f"{fmt.upper()}: ❌ Failed")
+                elif fmt_status.get("status") == "downloading":
+                    progress = fmt_status.get("progress", 0)
+                    status_display.append(f"{fmt.upper()}: ⏳ Downloading... ({progress}%)")
+                elif fmt_status.get("status") == "completed":
+                    status_display.append(f"{fmt.upper()}: ✅ Completed (100%)")
+                else:
+                    status_display.append(f"{fmt.upper()}: ❓ Unknown status")
+            else:
+                status_display.append(f"{fmt.upper()}: Not started")
+        
         content += f"""
-        <div style='margin-bottom:10px; font-size:small;'>
-            <img src='/thumb/{video_id}' width='120' height='90'><br>
-            <b>{title}</b><br>
-            <a href='/download?q={video_id}&fmt=mp3'>MP3</a> |
-            <a href='/download?q={video_id}&fmt=mp4'>MP4</a> |
-            <a href='/download?q={video_id}&fmt=3gp'>3GP</a> |
-            <a href='/details/{video_id}'>Details</a> |
-            <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
+        <div style='margin-bottom:20px; padding:15px; border:1px solid #ddd; border-radius:8px;'>
+            <div style='font-size:large;'>
+                🎬 Video: <b>{title}</b><br>
+                🆔 ID: {video_id}
+            </div>
+            <div style='margin-top:10px;'>
+                {", ".join(status_display[:3])}<br>
+                {", ".join(status_display[3:]) if len(status_display) > 3 else ""}
+            </div>
+            <div style='margin-top:10px;'>
+                <a href='/download?q={video_id}&fmt=mp3'>MP3</a> |
+                <a href='/download?q={video_id}&fmt=mp4'>MP4</a> |
+                <a href='/download?q={video_id}&fmt=3gp'>3GP</a> |
+                <a href='/details/{video_id}'>Details</a> |
+                <a href='/remove?q={video_id}' style='color:red;'>Remove</a>
+            </div>
         </div>"""
 
     last_video = get_last_video()
@@ -220,7 +290,7 @@ def search():
 @app.route("/thumb/<video_id>")
 def thumbnail_proxy(video_id):
     thumb_path = THUMB_DIR / f"{video_id}.jpg"
-    
+
     if not thumb_path.exists():
         try:
             r = requests.get(f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
@@ -230,7 +300,7 @@ def thumbnail_proxy(video_id):
         except Exception as e:
             logging.warning(f"Thumbnail download failed for {video_id}: {e}")
             return "Thumbnail not found", 404
-    
+
     if thumb_path.exists():
         return Response(thumb_path.read_bytes(), mimetype="image/jpeg")
     return "Thumbnail not found", 404
@@ -255,10 +325,10 @@ def details(video_id):
             },
             timeout=10
         )
-        
+
         if not details_res.ok or not details_res.json().get("items"):
             return "Video not found", 404
-            
+
         details_data = details_res.json()["items"][0]
         title = clean_title(details_data["snippet"]["title"])
         save_title(video_id, title)
@@ -284,7 +354,7 @@ def details(video_id):
 
         duration = details_data["contentDetails"]["duration"]
         views = "{:,}".format(int(details_data["statistics"].get("viewCount", 0)))
-        
+
         content = f"""
         <html><head><title>{title}</title></head>
         <body style='font-family:sans-serif;'>
@@ -318,7 +388,7 @@ def details(video_id):
 
         content += "</body></html>"
         return content
-        
+
     except Exception as e:
         logging.error(f"Details fetch failed: {e}")
         return "Failed to fetch video details", 500
@@ -341,6 +411,7 @@ def ready():
 
     if not final_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
+        update_status(video_id, fmt, "downloading", 10)
 
         # Metadata extraction
         try:
@@ -355,6 +426,7 @@ def ready():
                 raise ValueError("Unexpected metadata format")
             video_title, uploader, duration, upload_date = parts
             album_date = datetime.strptime(upload_date, "%Y%m%d").strftime("%B %Y")
+            update_status(video_id, fmt, "downloading", 20)
         except Exception as e:
             logging.error(f"Metadata extraction failed: {e}")
             video_title = title
@@ -372,6 +444,7 @@ def ready():
 
         try:
             if fmt == "mp3":
+                update_status(video_id, fmt, "downloading", 30)
                 # Download audio only
                 subprocess.run(base_cmd + [
                     "-f", "bestaudio",
@@ -379,6 +452,7 @@ def ready():
                     "--audio-format", "mp3",
                     "--postprocessor-args", "-ar 22050 -ac 1 -b:a 40k"
                 ], check=True, stderr=subprocess.PIPE)
+                update_status(video_id, fmt, "downloading", 60)
 
                 # Embed thumbnail and metadata
                 thumb = download_thumbnail(video_id)
@@ -410,21 +484,27 @@ def ready():
                         str(final_path)
                     ], check=True, stderr=subprocess.PIPE)
                 temp_path.unlink(missing_ok=True)
+                update_status(video_id, fmt, "completed", 100)
 
             elif fmt == "mp4":
+                update_status(video_id, fmt, "downloading", 30)
                 subprocess.run(base_cmd + [
                     "-f", "best[ext=mp4]",
                     "--recode-video", "mp4",
                     "--postprocessor-args", "-vf scale=320:240 -r 15 -b:v 384k -b:a 32k"
                 ], check=True, stderr=subprocess.PIPE)
+                update_status(video_id, fmt, "downloading", 70)
                 shutil.move(str(temp_path), str(final_path))
+                update_status(video_id, fmt, "completed", 100)
 
             elif fmt == "3gp":
+                update_status(video_id, fmt, "downloading", 30)
                 intermediate_mp4 = TEMP_DIR / f"{video_id}_{title}.mp4"
                 subprocess.run(base_cmd + [
                     "-f", "best[ext=mp4]/best",
                     "-o", str(intermediate_mp4)
                 ], check=True, stderr=subprocess.PIPE)
+                update_status(video_id, fmt, "downloading", 50)
 
                 subprocess.run([
                     "ffmpeg", "-y",
@@ -440,15 +520,18 @@ def ready():
                     str(final_path)
                 ], check=True, stderr=subprocess.PIPE)
                 intermediate_mp4.unlink(missing_ok=True)
+                update_status(video_id, fmt, "completed", 100)
 
             else:
                 return "Unsupported format", 400
 
         except subprocess.CalledProcessError as e:
             logging.error(f"FFmpeg or yt-dlp failed:\n{e.stderr.decode(errors='ignore')}")
+            update_status(video_id, fmt, "failed")
             return "Download failed", 500
         except Exception as e:
             logging.error(f"Unexpected error during download: {e}")
+            update_status(video_id, fmt, "failed")
             return "Download failed", 500
 
     # Serve file
@@ -488,6 +571,9 @@ def remove():
             thumb.unlink()
         except Exception as e:
             logging.warning(f"Failed to remove thumbnail {thumb}: {e}")
+
+    # Clear status
+    clear_status(video_id)
 
     return redirect("/")
 
