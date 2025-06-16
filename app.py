@@ -84,20 +84,10 @@ def get_status_display(fmt, fmt_status, file_ext):
     else:
         return f"{fmt.upper()}: Not started"
 
-# Original utility functions
-def clean_title(title):
-    try:
-        decoded = unquote(str(title))
-        ascii_text = unidecode(decoded)
-        clean_text = "".join(c if c.isalnum() or c in " .,-_" else " " for c in ascii_text)
-        return " ".join(clean_text.split()).strip()
-    except Exception as e:
-        logging.error(f"Failed to clean title '{title}': {e}")
-        return "untitled"
-
+# Utility functions (modified to preserve original Unicode)
 def safe_filename(name):
-    clean = clean_title(name)
-    return "".join(c if c.isalnum() or c in "_-" else "_" for c in clean)
+    """Only replace filesystem-problematic characters while preserving Unicode"""
+    return "".join(c if c not in '/\\:*?"<>|' else '_' for c in name)
 
 def save_title(video_id, title):
     try:
@@ -215,7 +205,7 @@ def index():
                 content += "<h3>Related to Your Last Search</h3>"
                 for item in related:
                     vid = item["id"]["videoId"]
-                    title = clean_title(item["snippet"]["title"])
+                    title = item["snippet"]["title"]  # Original Unicode title
                     save_title(vid, title)
                     content += f"""
                     <div style='margin-bottom:10px; font-size:small;'>
@@ -262,7 +252,7 @@ def search():
             results = r.json().get("items", [])
             for item in results:
                 video_id = item["id"]["videoId"]
-                title = clean_title(item["snippet"]["title"])
+                title = item["snippet"]["title"]  # Original Unicode title
                 save_title(video_id, title)
                 html += f"""
                 <div style='margin-bottom:10px; font-size:small;'>
@@ -325,7 +315,7 @@ def details(video_id):
             return "Video not found", 404
 
         details_data = details_res.json()["items"][0]
-        title = clean_title(details_data["snippet"]["title"])
+        title = details_data["snippet"]["title"]  # Original Unicode title
         save_title(video_id, title)
 
         related_items = []
@@ -369,7 +359,7 @@ def details(video_id):
 
         for item in related_items:
             rid = item["id"]["videoId"]
-            rtitle = clean_title(item["snippet"]["title"])
+            rtitle = item["snippet"]["title"]  # Original Unicode title
             save_title(rid, rtitle)
             content += f"""
             <div style='margin-bottom:10px; font-size:small;'>
@@ -398,10 +388,11 @@ def ready():
     if not check_cookies():
         return "Valid cookies file required", 400
 
-    title = load_title(video_id)  # keep full Unicode title
+    title = load_title(video_id)  # Original Unicode title
+    safe_title = safe_filename(title)
     ext = fmt if fmt in ["mp3", "mp4", "3gp"] else "mp3"
-    final_path = BASE_DIR / f"{video_id}_{title}.{ext}"
-    temp_path = TEMP_DIR / f"{video_id}_{title}.{ext}"
+    final_path = BASE_DIR / f"{video_id}_{safe_title}.{ext}"
+    temp_path = TEMP_DIR / f"{video_id}_{safe_title}.{ext}"
 
     if not final_path.exists():
         url = f"https://www.youtube.com/watch?v={video_id}"
@@ -447,7 +438,7 @@ def ready():
                 update_status(video_id, fmt, "converting", 60)
 
                 thumb = download_thumbnail(video_id)
-                final_with_meta = TEMP_DIR / f"{title}_with_art.mp3"
+                final_with_meta = TEMP_DIR / f"{safe_title}_with_art.mp3"
                 if thumb and thumb.exists():
                     subprocess.run([
                         "ffmpeg", "-y",
@@ -491,7 +482,7 @@ def ready():
 
             elif fmt == "3gp":
                 update_status(video_id, fmt, "downloading", 20)
-                intermediate_mp4 = TEMP_DIR / f"{video_id}_{title}.mp4"
+                intermediate_mp4 = TEMP_DIR / f"{video_id}_{safe_title}.mp4"
                 subprocess.run(base_cmd + [
                     "-f", "best[ext=mp4]/best",
                     "-o", str(intermediate_mp4)
@@ -537,7 +528,7 @@ def ready():
         final_path.open("rb"),
         mimetype=mimetype,
         headers={
-            "Content-Disposition": f"attachment; filename={final_path.name}",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote_plus(final_path.name)}",
             "Content-Length": str(final_path.stat().st_size)  
         }
     )
