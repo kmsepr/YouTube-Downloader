@@ -537,7 +537,8 @@ def ready():
         final_path.open("rb"),
         mimetype=mimetype,
         headers={
-            "Content-Disposition": f"attachment; filename={final_path.name}"
+            "Content-Disposition": f"attachment; filename={final_path.name}",
+            "Content-Length": str(final_path.stat().st_size)  # 👈 Add this line
         }
     )
 
