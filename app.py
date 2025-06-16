@@ -102,7 +102,7 @@ def safe_filename(name):
 def save_title(video_id, title):
     try:
         cache = json.loads(TITLE_CACHE.read_text(encoding="utf-8"))
-        cache[video_id] = clean_title(title)
+        cache[video_id] = title  # Save original Unicode title
         TITLE_CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logging.error(f"Failed to save title: {e}")
