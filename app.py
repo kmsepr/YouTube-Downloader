@@ -2,12 +2,12 @@ import os
 import sqlite3
 import requests
 import feedparser
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 DB_FILE = 'podcasts.db'
 
-# ─── DB INIT ─────────────────────────
+# ─── DB INIT ─────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -39,7 +39,7 @@ def init_db():
 
 init_db()
 
-# ─── SEARCH PODCASTS (Podcast Index) ──────────────────
+# ─── SEARCH ─────────────────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -50,7 +50,7 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD PODCAST FROM RSS ─────────────────────────────
+# ─── ADD PODCAST BY RSS ────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -77,7 +77,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── LIST FAVORITES ───────────────────────────────────
+# ─── LIST FAVORITES ────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -87,7 +87,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET EPISODES ─────────────────────────────────────
+# ─── GET EPISODES ──────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -108,7 +108,13 @@ def get_episodes(pid):
     new_eps = []
     for item in feed.entries:
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
-        audio = item.get('enclosures')[0]['href'] if item.get('enclosures') else ''
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc['href'].endswith('.mp3'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
         c.execute('''
             INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -128,23 +134,41 @@ def get_episodes(pid):
     conn.close()
     return jsonify(new_eps)
 
-# ─── STATIC LIST (Optional) ────────────────────────────
+# ─── STATIC PODCAST LIST ───────────────
 @app.route('/api/static_list')
 def static_list():
     return jsonify([
         {"title": "Suprabhaatham Radio", "rss_url": "https://suprabhaatham.com/feed/podcast"},
         {"title": "Madhyamam Podcast", "rss_url": "https://www.madhyamam.com/rss/458"},
-        {"title": "Islamic Reminder", "rss_url": "https://example.com/islamic-feed.xml"}
+        {"title": "Islamic Reminder", "rss_url": "https://example.com/islamic.xml"}
     ])
 
-# ─── UI: MOBILE FRIENDLY ──────────────────────────────
+# ─── PROXY ROUTE (fix for no sound) ────
+@app.route('/proxy')
+def proxy():
+    url = request.args.get('url')
+    if not url:
+        return 'Missing URL', 400
+    try:
+        r = requests.get(url, stream=True, headers={'User-Agent': 'Mozilla/5.0'})
+        return Response(
+            r.iter_content(chunk_size=1024),
+            content_type=r.headers.get('Content-Type', 'audio/mpeg')
+        )
+    except Exception as e:
+        return str(e), 500
+
+# ─── UI HOMEPAGE ───────────────────────
 @app.route('/')
-def ui():
+def homepage():
     return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcasts</title>
-<style>body{font-family:sans-serif;font-size:14px;margin:4px}input,button{width:100%;margin:4px 0}
-.card{border:1px solid #ccc;padding:5px;margin-top:6px}audio{width:100%}.tiny{font-size:11px;color:#666}</style>
-</head><body>
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320">
+<title>Podcast</title>
+<style>body{font-family:sans-serif;font-size:14px;margin:4px}
+input,button{width:100%;margin:4px 0}audio{width:100%}
+.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+.tiny{font-size:11px;color:#666}</style></head>
+<body>
 <h3>🎧 Podcast</h3>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
 <input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add by RSS</button>
@@ -170,13 +194,13 @@ async function loadEp(id){let r=await fetch(`/api/podcast/${encodeURIComponent(i
 let d=await r.json();let o=e('results');o.innerHTML='';
 d.slice(0,5).forEach(ep=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-<audio controls src="${ep.audio_url}"></audio>`;o.appendChild(div);})}
+<audio controls src="/proxy?url=${encodeURIComponent(ep.audio_url)}"></audio>`;o.appendChild(div);})}
 async function loadStatic(){let r=await fetch('/api/static_list');let d=await r.json();let o=e('results');
 o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${p.title}</b><br><button onclick="addFeed('${p.rss_url}')">➕ Add</button>`;o.appendChild(div);})}
 </script></body></html>
 '''
 
-# ─── START ──────────────────────────────
+# ─── START SERVER ──────────────────────
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
