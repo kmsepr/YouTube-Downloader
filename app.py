@@ -3,17 +3,15 @@ import sqlite3
 import requests
 import feedparser
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
 
-load_dotenv()
 app = Flask(__name__)
 DB_FILE = 'podcasts.db'
 
-# Initialize DB
+# ─── DB INIT ─────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('''
+    c = conn.cursor()
+    c.execute('''
         CREATE TABLE IF NOT EXISTS podcasts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             podcast_id TEXT UNIQUE,
@@ -23,7 +21,7 @@ def init_db():
             rss_url TEXT
         )
     ''')
-    cursor.execute('''
+    c.execute('''
         CREATE TABLE IF NOT EXISTS episodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             podcast_id TEXT,
@@ -41,112 +39,144 @@ def init_db():
 
 init_db()
 
-# 🔍 Search podcasts using ListenNotes
+# ─── SEARCH PODCASTS (Podcast Index) ──────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
-    api_key = os.getenv('LISTEN_NOTES_API_KEY')
-    if not api_key:
-        return jsonify({'error': 'API key missing'}), 500
     try:
-        res = requests.get(
-            f'https://listen-api.listennotes.com/api/v2/search?q={query}',
-            headers={'X-ListenAPI-Key': api_key}
-        )
-        return jsonify(res.json().get('results', []))
+        res = requests.get(f'https://api.podcastindex.org/api/1.0/search/byterm?q={query}',
+                           headers={'User-Agent': 'PodApp', 'X-Auth-Date': '0', 'X-Auth-Key': '000'})
+        return jsonify(res.json().get('feeds', []))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ➕ Add podcast to favorites
-@app.route('/api/favorites', methods=['POST'])
-def add_favorite():
+# ─── ADD PODCAST FROM RSS ─────────────────────────────
+@app.route('/api/add_by_rss', methods=['POST'])
+def add_by_rss():
     data = request.get_json()
-    fields = ['podcast_id', 'title', 'author', 'cover_url', 'rss_url']
-    if not all(field in data for field in fields):
-        return jsonify({'error': 'Missing fields'}), 400
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    try:
-        cursor.execute('''
-            INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (data['podcast_id'], data['title'], data['author'], data['cover_url'], data['rss_url']))
-        conn.commit()
-        return jsonify({'message': 'Podcast added'}), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
+    rss_url = data.get('rss_url')
+    if not rss_url:
+        return jsonify({'error': 'Missing rss_url'}), 400
 
-# ⭐ Get all favorite podcasts
-@app.route('/api/favorites', methods=['GET'])
+    feed = feedparser.parse(rss_url)
+    if not feed.entries:
+        return jsonify({'error': 'Invalid or empty RSS feed'}), 400
+
+    podcast_id = rss_url
+    title = feed.feed.get('title', 'Untitled')
+    author = feed.feed.get('author', 'Unknown')
+    image = feed.feed.get('image', {}).get('href', '')
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (podcast_id, title, author, image, rss_url))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Added from RSS', 'title': title})
+
+# ─── LIST FAVORITES ───────────────────────────────────
+@app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM podcasts')
-    podcasts = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
+    c = conn.cursor()
+    c.execute('SELECT * FROM podcasts')
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
-    return jsonify(podcasts)
+    return jsonify(rows)
 
-# 🎧 Get episodes for a podcast
-@app.route('/api/podcast/<podcast_id>/episodes', methods=['GET'])
-def get_episodes(podcast_id):
+# ─── GET EPISODES ─────────────────────────────────────
+@app.route('/api/podcast/<path:pid>/episodes')
+def get_episodes(pid):
     conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    # Check DB first
-    cursor.execute('SELECT * FROM episodes WHERE podcast_id = ?', (podcast_id,))
-    episodes = [dict(zip([col[0] for col in cursor.description], row)) for row in cursor.fetchall()]
-    if episodes:
+    c = conn.cursor()
+    c.execute('SELECT * FROM episodes WHERE podcast_id = ?', (pid,))
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+    if rows:
         conn.close()
-        return jsonify(episodes)
+        return jsonify(rows)
 
-    # Else fetch RSS
-    cursor.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (podcast_id,))
-    row = cursor.fetchone()
+    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
+    row = c.fetchone()
     if not row:
         conn.close()
         return jsonify({'error': 'Podcast not found'}), 404
 
-    rss_url = row[0]
-    feed = feedparser.parse(rss_url)
-    new_episodes = []
+    feed = feedparser.parse(row[0])
+    new_eps = []
+    for item in feed.entries:
+        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
+        audio = item.get('enclosures')[0]['href'] if item.get('enclosures') else ''
+        c.execute('''
+            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            pid, eid, item.get('title', ''), item.get('summary', ''),
+            audio, item.get('published', ''), 0
+        ))
+        new_eps.append({
+            'episode_id': eid,
+            'title': item.get('title', ''),
+            'description': item.get('summary', ''),
+            'audio_url': audio,
+            'pub_date': item.get('published', ''),
+            'duration': 0
+        })
+    conn.commit()
+    conn.close()
+    return jsonify(new_eps)
 
-    try:
-        for item in feed.entries:
-            ep_id = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
-            title = item.get('title', '')
-            desc = item.get('summary', '')
-            audio = item.get('enclosures')[0]['href'] if item.get('enclosures') else ''
-            pub_date = item.get('published', '')
-            duration = int(item.get('itunes_duration', 0)) if 'itunes_duration' in item else 0
+# ─── STATIC LIST (Optional) ────────────────────────────
+@app.route('/api/static_list')
+def static_list():
+    return jsonify([
+        {"title": "Suprabhaatham Radio", "rss_url": "https://suprabhaatham.com/feed/podcast"},
+        {"title": "Madhyamam Podcast", "rss_url": "https://www.madhyamam.com/rss/458"},
+        {"title": "Islamic Reminder", "rss_url": "https://example.com/islamic-feed.xml"}
+    ])
 
-            new_episodes.append({
-                'episode_id': ep_id,
-                'title': title,
-                'description': desc,
-                'audio_url': audio,
-                'pub_date': pub_date,
-                'duration': duration
-            })
-
-            cursor.execute('''
-                INSERT OR IGNORE INTO episodes
-                (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (podcast_id, ep_id, title, desc, audio, pub_date, duration))
-
-        conn.commit()
-        return jsonify(new_episodes)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-# 🔃 Health check
+# ─── UI: MOBILE FRIENDLY ──────────────────────────────
 @app.route('/')
-def home():
-    return '🎙️ Podcast API is running!'
+def ui():
+    return '''
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcasts</title>
+<style>body{font-family:sans-serif;font-size:14px;margin:4px}input,button{width:100%;margin:4px 0}
+.card{border:1px solid #ccc;padding:5px;margin-top:6px}audio{width:100%}.tiny{font-size:11px;color:#666}</style>
+</head><body>
+<h3>🎧 Podcast</h3>
+<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
+<input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add by RSS</button>
+<button onclick="loadStatic()">🌐 Static List</button>
+<button onclick="loadFavs()">⭐ Favorites</button>
+<div id="results"></div>
+<script>
+const B = location.origin;
+function e(id){return document.getElementById(id)}
+async function search(){let q=e('q').value;
+let r=await fetch(`/api/search?q=${encodeURIComponent(q)}`);let d=await r.json();
+let o=e('results');o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');
+div.className='card';div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.url}</span><br>
+<button onclick="addFeed('${p.url}')">➕ Add</button>`;o.appendChild(div);})}
+async function addFeed(url){await fetch('/api/add_by_rss',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({rss_url:url})});alert('Added!');}
+async function addRss(){addFeed(e('rss').value)}
+async function loadFavs(){let r=await fetch('/api/favorites');let d=await r.json();let o=e('results');
+o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
+div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.author}</span><br>
+<button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;o.appendChild(div);})}
+async function loadEp(id){let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes`);
+let d=await r.json();let o=e('results');o.innerHTML='';
+d.slice(0,5).forEach(ep=>{let div=document.createElement('div');div.className='card';
+div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
+<audio controls src="${ep.audio_url}"></audio>`;o.appendChild(div);})}
+async function loadStatic(){let r=await fetch('/api/static_list');let d=await r.json();let o=e('results');
+o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
+div.innerHTML=`<b>${p.title}</b><br><button onclick="addFeed('${p.rss_url}')">➕ Add</button>`;o.appendChild(div);})}
+</script></body></html>
+'''
 
+# ─── START ──────────────────────────────
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 3000)))
+    app.run(host='0.0.0.0', port=3000)
