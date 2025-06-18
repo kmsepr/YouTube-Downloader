@@ -39,7 +39,7 @@ def init_db():
 
 init_db()
 
-# ─── SEARCH PODCASTS ─────────────────────
+# ─── SEARCH PODCASTS (PodcastIndex) ──────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -87,17 +87,21 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET EPISODES (LIMITED TO 5) ─────────
+# ─── GET PAGINATED EPISODES ─────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
+    offset = int(request.args.get('offset', 0))
+    limit = 5
+
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('SELECT * FROM episodes WHERE podcast_id = ?', (pid,))
+    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     if rows:
         conn.close()
         return jsonify(rows)
 
+    # Fetch & save if not in DB
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -105,8 +109,8 @@ def get_episodes(pid):
         return jsonify({'error': 'Podcast not found'}), 404
 
     feed = feedparser.parse(row[0])
-    new_eps = []
-    for item in feed.entries[:5]:  # ✅ Only fetch latest 5 episodes
+    all_eps = []
+    for item in feed.entries:
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
@@ -115,26 +119,29 @@ def get_episodes(pid):
                 break
         if not audio:
             continue
+        title = item.get('title', '')
+        desc = item.get('summary', '') or item.get('description', '')
+        pub_date = item.get('published', '')
+
         c.execute('''
             INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            pid, eid, item.get('title', ''), item.get('summary', ''),
-            audio, item.get('published', ''), 0
+            pid, eid, title, desc, audio, pub_date, 0
         ))
-        new_eps.append({
+        all_eps.append({
             'episode_id': eid,
-            'title': item.get('title', ''),
-            'description': item.get('summary', ''),
+            'title': title,
+            'description': desc,
             'audio_url': audio,
-            'pub_date': item.get('published', ''),
+            'pub_date': pub_date,
             'duration': 0
         })
     conn.commit()
     conn.close()
-    return jsonify(new_eps)
+    return jsonify(all_eps[offset:offset + limit])
 
-# ─── HTML HOMEPAGE ───────────────────────
+# ─── UI HOMEPAGE ────────────────────────
 @app.route('/')
 def homepage():
     return '''
@@ -164,12 +171,19 @@ async function loadFavs(){let r=await fetch('/api/favorites');let d=await r.json
 o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.author}</span><br>
 <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;o.appendChild(div);})}
-async function loadEp(id){let o=e('results');o.innerHTML='⏳ Loading...';
-let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes`);
-let d=await r.json();o.innerHTML='';
-d.forEach(ep=>{let div=document.createElement('div');div.className='card';
-div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-<a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);})}
+let epOffset=0,currentId='';
+async function loadEp(id){currentId=id;epOffset=0;
+e('results').innerHTML='⏳ Loading...';let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+let d=await r.json();showEpisodes(d,true);}
+async function loadMore(){epOffset+=5;
+let r=await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+let d=await r.json();showEpisodes(d,false);}
+function showEpisodes(data,reset){let o=e('results');
+if(reset) o.innerHTML='';data.forEach(ep=>{let div=document.createElement('div');
+div.className='card';div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
+<p>${ep.description||''}</p><a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);});
+if(data.length===5){let btn=document.createElement('button');btn.innerText='⏬ Load More';
+btn.onclick=loadMore;o.appendChild(btn);}}
 </script></body></html>
 '''
 
