@@ -1,25 +1,30 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+# Use official Python image
+FROM python:3.11-slim
 
-# Set the working directory in the container
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Create working directory
 WORKDIR /app
 
-# Install system dependencies (ffmpeg and curl only)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    curl \
-    ca-certificates \
+    gcc \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy dependency files
+COPY requirements.txt .
+
 # Install Python dependencies
-COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your app code to the container
-COPY . /app
+# Copy app code
+COPY . .
 
-# Expose Flask app port
-EXPOSE 8000
+# Expose port
+EXPOSE 3000
 
-# Run the Flask app when the container starts
+# Run the Flask app
 CMD ["python", "app.py"]
