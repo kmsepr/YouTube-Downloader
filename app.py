@@ -2,8 +2,7 @@ import os
 import sqlite3
 import requests
 import feedparser
-import subprocess
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 DB_FILE = 'podcasts.db'
@@ -40,7 +39,7 @@ def init_db():
 
 init_db()
 
-# ─── API: SEARCH ─────────────────────────
+# ─── SEARCH ─────────────────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -51,7 +50,7 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD PODCAST BY RSS ──────────────────
+# ─── ADD PODCAST BY RSS ─────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -78,7 +77,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── GET FAVORITES ───────────────────────
+# ─── LIST FAVORITES ─────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -88,7 +87,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET EPISODES ────────────────────────
+# ─── GET EPISODES ───────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -111,7 +110,7 @@ def get_episodes(pid):
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
-            if enc['href'].endswith('.mp3'):
+            if enc['href'].startswith('http') and enc['href'].endswith('.mp3'):
                 audio = enc['href']
                 break
         if not audio:
@@ -135,33 +134,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(new_eps)
 
-# ─── STATIC PODCAST LIST ─────────────────
-@app.route('/api/static_list')
-def static_list():
-    return jsonify([
-        {"title": "Suprabhaatham Radio", "rss_url": "https://suprabhaatham.com/feed/podcast"},
-        {"title": "Madhyamam Podcast", "rss_url": "https://www.madhyamam.com/rss/458"},
-        {"title": "Islamic Reminder", "rss_url": "https://example.com/islamic.xml"}
-    ])
-
-# ─── PROXY WITH FFMPEG TRANSCODING ───────
-@app.route('/proxy')
-def proxy():
-    url = request.args.get('url')
-    if not url:
-        return 'Missing URL', 400
-    try:
-        command = [
-            'ffmpeg', '-i', url,
-            '-f', 'mp3', '-b:a', '128k', '-vn',
-            '-acodec', 'libmp3lame', 'pipe:1'
-        ]
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE)
-        return Response(stream_with_context(proc.stdout), mimetype='audio/mpeg')
-    except Exception as e:
-        return str(e), 500
-
-# ─── HOMEPAGE ────────────────────────────
+# ─── UI HOMEPAGE ────────────────────────
 @app.route('/')
 def homepage():
     return '''
@@ -174,7 +147,6 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 <h3>🎧 Podcast</h3>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
 <input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add by RSS</button>
-<button onclick="loadStatic()">🌐 Static List</button>
 <button onclick="loadFavs()">⭐ Favorites</button>
 <div id="results"></div>
 <script>
@@ -196,13 +168,10 @@ async function loadEp(id){let r=await fetch(`/api/podcast/${encodeURIComponent(i
 let d=await r.json();let o=e('results');o.innerHTML='';
 d.slice(0,5).forEach(ep=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-<a href="/proxy?url=${encodeURIComponent(ep.audio_url)}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);})}
-async function loadStatic(){let r=await fetch('/api/static_list');let d=await r.json();let o=e('results');
-o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
-div.innerHTML=`<b>${p.title}</b><br><button onclick="addFeed('${p.rss_url}')">➕ Add</button>`;o.appendChild(div);})}
+<a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);})}
 </script></body></html>
 '''
 
-# ─── START ──────────────────────────────
+# ─── START SERVER ───────────────────────
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
