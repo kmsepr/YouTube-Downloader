@@ -1,5 +1,4 @@
 Flask
 requests
-unidecode
-yt-dlp
-google-api-python-client==2.56.0
+feedparser
+python-dotenv
