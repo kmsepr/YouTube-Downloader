@@ -39,7 +39,7 @@ def init_db():
 
 init_db()
 
-# ─── SEARCH ─────────────────────────────
+# ─── SEARCH PODCASTS ─────────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -50,7 +50,7 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD PODCAST BY RSS ─────────────────
+# ─── ADD BY RSS URL ──────────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -77,7 +77,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── LIST FAVORITES ─────────────────────
+# ─── GET FAVORITE PODCASTS ───────────────
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -87,7 +87,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET EPISODES ───────────────────────
+# ─── GET EPISODES (LIMITED TO 5) ─────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -106,7 +106,7 @@ def get_episodes(pid):
 
     feed = feedparser.parse(row[0])
     new_eps = []
-    for item in feed.entries:
+    for item in feed.entries[:5]:  # ✅ Only fetch latest 5 episodes
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
@@ -134,7 +134,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(new_eps)
 
-# ─── UI HOMEPAGE ────────────────────────
+# ─── HTML HOMEPAGE ───────────────────────
 @app.route('/')
 def homepage():
     return '''
@@ -164,14 +164,15 @@ async function loadFavs(){let r=await fetch('/api/favorites');let d=await r.json
 o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.author}</span><br>
 <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;o.appendChild(div);})}
-async function loadEp(id){let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes`);
-let d=await r.json();let o=e('results');o.innerHTML='';
-d.slice(0,5).forEach(ep=>{let div=document.createElement('div');div.className='card';
+async function loadEp(id){let o=e('results');o.innerHTML='⏳ Loading...';
+let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes`);
+let d=await r.json();o.innerHTML='';
+d.forEach(ep=>{let div=document.createElement('div');div.className='card';
 div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
 <a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);})}
 </script></body></html>
 '''
 
-# ─── START SERVER ───────────────────────
+# ─── START APP ───────────────────────────
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
