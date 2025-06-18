@@ -179,22 +179,109 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 .tiny{font-size:11px;color:#666}</style></head>
 <body>
 <h3>🎧 Podcast</h3>
+<button onclick="goHome()">🏠 Home</button>
 <input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add RSS</button>
 <h4>📂 Import OPML</h4>
 <input type="file" id="opmlFile"><button onclick="uploadOPML()">📤 Upload</button>
 <button onclick="loadFavs()">⭐ Favorites</button>
 <div id="results"></div>
 <script>
-const B=location.origin;
-function e(id){return document.getElementById(id)}
-async function addRss(){await fetch('/api/add_by_rss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rss_url:e('rss').value})});alert('Added!');}
-async function uploadOPML(){const f=e('opmlFile').files[0];if(!f)return alert("Choose a file");
-const fd=new FormData();fd.append('file',f);let r=await fetch('/api/import_opml',{method:'POST',body:fd});let d=await r.json();alert(d.message||'Done')}
-async function loadFavs(){let r=await fetch('/api/favorites');let d=await r.json();let o=e('results');o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.author}</span><br><button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;o.appendChild(div);})}
-let epOffset=0,currentId='';
-async function loadEp(id){currentId=id;epOffset=0;e('results').innerHTML='⏳ Loading...';let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);let d=await r.json();showEpisodes(d,true);}
-async function loadMore(){epOffset+=5;let r=await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);let d=await r.json();showEpisodes(d,false);}
-function showEpisodes(data,reset){let o=e('results');if(reset)o.innerHTML='';data.forEach(ep=>{let div=document.createElement('div');div.className='card';div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br><p>${ep.description||''}</p><a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);});if(data.length===5){let b=document.createElement('button');b.innerText='⏬ Load More';b.onclick=loadMore;o.appendChild(b);}}
+const B = location.origin;
+let epOffset = 0, currentId = '', state = 'home';
+
+function e(id){ return document.getElementById(id); }
+
+function goHome() {
+  e('results').innerHTML = '';
+  history.pushState({ page: 'home' }, '', '/');
+  state = 'home';
+}
+
+window.addEventListener('popstate', function (event) {
+  if (state !== 'home') {
+    goHome();
+  } else {
+    history.pushState(null, null, '/');
+  }
+});
+
+async function addRss() {
+  await fetch('/api/add_by_rss', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rss_url:e('rss').value})
+  });
+  alert('Added!');
+}
+
+async function uploadOPML() {
+  const f = e('opmlFile').files[0];
+  if (!f) return alert("Choose a file");
+  const fd = new FormData();
+  fd.append('file', f);
+  let r = await fetch('/api/import_opml', {method:'POST', body:fd});
+  let d = await r.json();
+  alert(d.message || 'Done');
+}
+
+async function loadFavs() {
+  let r = await fetch('/api/favorites');
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <b>${p.title}</b><br>
+      <span class="tiny">${p.author}</span><br>
+      <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
+    `;
+    o.appendChild(div);
+  });
+  history.pushState({ page: 'favorites' }, '', '#favs');
+  state = 'favorites';
+}
+
+async function loadEp(id) {
+  currentId = id;
+  epOffset = 0;
+  e('results').innerHTML = '⏳ Loading...';
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d = await r.json();
+  showEpisodes(d, true);
+  history.pushState({ page: 'episodes' }, '', '#ep');
+  state = 'episodes';
+}
+
+async function loadMore() {
+  epOffset += 5;
+  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+  let d = await r.json();
+  showEpisodes(d, false);
+}
+
+function showEpisodes(data, reset) {
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  data.forEach(ep => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <b>${ep.title}</b><br>
+      <span class="tiny">${ep.pub_date}</span><br>
+      <p>${ep.description || ''}</p>
+      <a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>
+    `;
+    o.appendChild(div);
+  });
+  if (data.length === 5) {
+    let b = document.createElement('button');
+    b.innerText = '⏬ Load More';
+    b.onclick = loadMore;
+    o.appendChild(b);
+  }
+}
 </script></body></html>
 '''
 
