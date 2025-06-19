@@ -160,6 +160,15 @@ def import_opml():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/exit', methods=['POST'])
+def exit_app():
+    shutdown = request.environ.get('werkzeug.server.shutdown')
+    if shutdown:
+        shutdown()
+        return 'Server shutting down...'
+    else:
+        os._exit(0)
+
 @app.route('/')
 def homepage():
     return '''
@@ -173,6 +182,7 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 <h4>📂 Import OPML</h4>
 <input type="file" id="opmlFile"><button onclick="uploadOPML()">📄 Upload</button>
 <button onclick="loadFavs()">⭐ Favorites</button>
+<button onclick="exitApp()">❌ Exit</button>
 <div id="results"></div>
 <script>
 const B = location.origin;
@@ -266,6 +276,11 @@ function showEpisodes(data, reset) {
     b.innerText = '⬇️ Load More';
     b.onclick = loadMore;
     o.appendChild(b);
+  }
+}
+function exitApp() {
+  if (confirm("Exit app?")) {
+    fetch('/api/exit', { method: 'POST' });
   }
 }
 </script></body></html>
