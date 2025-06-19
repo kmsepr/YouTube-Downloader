@@ -162,12 +162,16 @@ def import_opml():
 
 @app.route('/api/exit', methods=['POST'])
 def exit_app():
-    shutdown = request.environ.get('werkzeug.server.shutdown')
-    if shutdown:
-        shutdown()
-        return 'Server shutting down...'
-    else:
-        os._exit(0)
+    def shutdown():
+        func = request.environ.get('werkzeug.server.shutdown')
+        if func:
+            func()
+        else:
+            os._exit(0)
+    # Delay shutdown slightly so response is sent
+    from threading import Timer
+    Timer(1.0, shutdown).start()
+    return 'Shutting down...'
 
 @app.route('/')
 def homepage():
