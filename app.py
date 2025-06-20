@@ -86,7 +86,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-@app.route('/api/podcast/<pid>/episodes')
+@app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
     limit = 9
