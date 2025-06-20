@@ -3,14 +3,14 @@ import sqlite3
 import requests
 import feedparser
 import time
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
 
-# ─── Database Initialization ─────────────────────────────
+# ── DB INIT ──
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -43,7 +43,7 @@ def init_db():
 
 init_db()
 
-# ─── Add Podcast by RSS ─────────────────────────────
+# ── API: Add podcast by RSS ──
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -71,7 +71,7 @@ def add_by_rss():
 
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── List All Saved Podcasts ─────────────────────────────
+# ── API: Favorites ──
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -81,7 +81,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── Fetch Episodes (cached + parse if needed) ─────────────────────────────
+# ── API: Episodes ──
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
@@ -96,7 +96,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
-    # Not found in DB, fetch from RSS
+    # If not cached, fetch from RSS
     c.execute('SELECT rss_url, cover_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -106,8 +106,8 @@ def get_episodes(pid):
     rss_url, cover_url = row
     feed = feedparser.parse(rss_url)
     entries = sorted(feed.entries, key=lambda e: e.get('published_parsed', time.gmtime(0)), reverse=True)
-    all_eps = []
 
+    all_eps = []
     for item in entries:
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
@@ -143,7 +143,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# ─── Delete Podcast ─────────────────────────────
+# ── API: Delete podcast ──
 @app.route('/api/delete_podcast/<path:pid>', methods=['DELETE'])
 def delete_podcast(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -154,7 +154,7 @@ def delete_podcast(pid):
     conn.close()
     return jsonify({'message': 'Deleted'})
 
-# ─── Search from iTunes API ─────────────────────────────
+# ── API: iTunes search ──
 @app.route('/api/search_podcasts')
 def search_podcasts():
     q = request.args.get('q', '')
@@ -173,24 +173,62 @@ def search_podcasts():
         })
     return jsonify(results)
 
-# ─── Static Pages ─────────────────────────────
+# ── HTML Pages ──
 @app.route('/')
 def homepage():
-    return '<meta http-equiv="refresh" content="0; url=/home">'
+    return Response(f"""
+    <h1>Podcast App</h1>
+    <ul>
+        <li><a href="/home">Home</a></li>
+        <li><a href="/favorites">Favorites</a></li>
+    </ul>
+    """, mimetype="text/html")
 
 @app.route('/home')
 def home_ui():
-    return open("/app/home.html").read()
+    return Response("""
+    <h2>Add Podcast by RSS</h2>
+    <form action="/api/add_by_rss" method="post" onsubmit="submitForm(event)">
+        <input type="text" name="rss_url" placeholder="Enter RSS URL" required>
+        <button type="submit">Add</button>
+    </form>
+    <script>
+        function submitForm(e) {{
+            e.preventDefault();
+            fetch('/api/add_by_rss', {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ rss_url: e.target.rss_url.value }})
+            }}).then(r => r.json()).then(data => alert(data.message || data.error));
+        }}
+    </script>
+    """, mimetype="text/html")
 
 @app.route('/favorites')
 def favorites_page():
-    return open("/app/favorites.html").read()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT title, podcast_id FROM podcasts')
+    items = c.fetchall()
+    conn.close()
+    html = "<h2>Favorites</h2><ul>"
+    for title, pid in items:
+        html += f'<li><a href="/episodes/{pid}">{title}</a></li>'
+    html += "</ul>"
+    return Response(html, mimetype="text/html")
 
 @app.route('/episodes/<path:pid>')
 def episodes_page(pid):
-    cover = request.args.get('cover', '')
-    return open("/app/episodes.html").read().replace('{{PID}}', pid).replace('{{COVER}}', cover)
+    html = f"<h2>Episodes</h2><ul>"
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT title, audio_url FROM episodes WHERE podcast_id=? ORDER BY pub_timestamp DESC LIMIT 10', (pid,))
+    for title, audio_url in c.fetchall():
+        html += f'<li>{title}<br><a href="{audio_url}">▶️ Play</a></li>'
+    conn.close()
+    html += "</ul>"
+    return Response(html, mimetype="text/html")
 
-# ─── Run Server ─────────────────────────────
+# ── Run App ──
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
