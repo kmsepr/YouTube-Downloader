@@ -200,3 +200,6 @@ def homepage():
     <p><strong>📂 Import OPML</strong></p>
     <p><strong>⭐ View Saved Feeds</strong></p>
     '''
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=3000)
