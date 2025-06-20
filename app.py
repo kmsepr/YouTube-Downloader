@@ -68,6 +68,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
+
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -77,6 +78,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
+
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
@@ -85,6 +87,7 @@ def get_episodes(pid):
     c = conn.cursor()
     c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_timestamp DESC LIMIT ? OFFSET ?', (pid, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+
     if rows:
         conn.close()
         return jsonify(rows)
@@ -132,6 +135,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
+
 @app.route('/api/delete_podcast/<path:pid>', methods=['DELETE'])
 def delete_podcast(pid):
     conn = sqlite3.connect(DB_FILE)
@@ -141,6 +145,7 @@ def delete_podcast(pid):
     conn.commit()
     conn.close()
     return jsonify({'message': 'Deleted'})
+
 
 @app.route('/api/import_opml', methods=['POST'])
 def import_opml():
@@ -154,141 +159,44 @@ def import_opml():
         for outline in root.iter('outline'):
             rss = outline.attrib.get('xmlUrl')
             if rss:
-                requests.post('http://localhost:3000/api/add_by_rss', json={'rss_url': rss})
+                requests.post('http://localhost:5000/api/add_by_rss', json={'rss_url': rss})
                 count += 1
         return jsonify({'message': f'Imported {count} feeds'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/exit', methods=['POST'])
-def exit_app():
-    def shutdown():
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func:
-            func()
-        else:
-            os._exit(0)
-    # Delay shutdown slightly so response is sent
-    from threading import Timer
-    Timer(1.0, shutdown).start()
-    return 'Shutting down...'
+
+@app.route('/api/search_podcasts')
+def search_podcasts():
+    q = request.args.get('q', '')
+    if not q:
+        return jsonify([])
+
+    r = requests.get('https://api.podcastindex.org/api/1.0/search/byterm', params={'q': q}, headers={
+        'User-Agent': 'PodcastApp',
+        'X-Auth-Key': '00000000000000000000000000000000',
+        'X-Auth-Date': str(int(time.time())),
+        'Authorization': 'Bearer openpodcastindex'
+    })
+
+    data = r.json()
+    results = []
+    for p in data.get('feeds', []):
+        results.append({
+            'title': p.get('title'),
+            'author': p.get('author'),
+            'rss': p.get('url'),
+            'cover': p.get('image')
+        })
+    return jsonify(results)
+
 
 @app.route('/')
 def homepage():
     return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title>
-<style>body{font-family:sans-serif;font-size:14px;margin:4px}
-input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
-.tiny{font-size:11px;color:#666}</style></head><body>
-<h3>🎷 Podcast</h3>
-<button onclick="goHome()">🏠 Home</button>
-<input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add RSS</button>
-<h4>📂 Import OPML</h4>
-<input type="file" id="opmlFile"><button onclick="uploadOPML()">📄 Upload</button>
-<button onclick="loadFavs()">⭐ Favorites</button>
-<button onclick="exitApp()">❌ Exit</button>
-<div id="results"></div>
-<script>
-const B = location.origin;
-let epOffset = 0, currentId = '', state = 'home';
-function e(id){ return document.getElementById(id); }
-function goHome() {
-  e('results').innerHTML = '';
-  history.pushState({ page: 'home' }, '', '/');
-  state = 'home';
-}
-window.addEventListener('popstate', function (event) {
-  if (state !== 'home') {
-    goHome();
-  } else {
-    history.pushState(null, null, '/');
-  }
-});
-async function addRss() {
-  await fetch('/api/add_by_rss', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({rss_url:e('rss').value})
-  });
-  alert('Added!');
-}
-async function uploadOPML() {
-  const f = e('opmlFile').files[0];
-  if (!f) return alert("Choose a file");
-  const fd = new FormData();
-  fd.append('file', f);
-  let r = await fetch('/api/import_opml', {method:'POST', body:fd});
-  let d = await r.json();
-  alert(d.message || 'Done');
-}
-async function loadFavs() {
-  let r = await fetch('/api/favorites');
-  let d = await r.json();
-  let o = e('results');
-  o.innerHTML = '';
-  d.forEach(p => {
-    let div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `
-      <b>${p.title}</b><br>
-      <span class="tiny">${p.author}</span><br>
-      <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
-      <button onclick="deleteFeed('${p.podcast_id}')">🗑 Delete</button>
-    `;
-    o.appendChild(div);
-  });
-  history.pushState({ page: 'favorites' }, '', '#favs');
-  state = 'favorites';
-}
-async function deleteFeed(id) {
-  if (!confirm('Are you sure you want to delete this podcast?')) return;
-  await fetch(`/api/delete_podcast/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  loadFavs();
-}
-async function loadEp(id) {
-  currentId = id;
-  epOffset = 0;
-  e('results').innerHTML = '⏳ Loading...';
-  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
-  let d = await r.json();
-  showEpisodes(d, true);
-  history.pushState({ page: 'episodes' }, '', '#ep');
-  state = 'episodes';
-}
-async function loadMore() {
-  epOffset += 5;
-  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-  let d = await r.json();
-  showEpisodes(d, false);
-}
-function showEpisodes(data, reset) {
-  let o = e('results');
-  if (reset) o.innerHTML = '';
-  data.forEach(ep => {
-    let div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `
-      <b>${ep.title}</b><br>
-      <span class="tiny">${ep.pub_date}</span><br>
-      <p>${ep.description || ''}</p>
-      <a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>
-    `;
-    o.appendChild(div);
-  });
-  if (data.length === 5) {
-    let b = document.createElement('button');
-    b.innerText = '⬇️ Load More';
-    b.onclick = loadMore;
-    o.appendChild(b);
-  }
-}
-function exitApp() {
-  if (confirm("Exit app?")) {
-    fetch('/api/exit', { method: 'POST' });
-  }
-}
-</script></body></html>
-'''
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+    <h1>🎧 Podcast Player</h1>
+    <p><strong>➕ Add RSS</strong></p>
+    <p><strong>🔍 Search Podcasts</strong></p>
+    <p><strong>📂 Import OPML</strong></p>
+    <p><strong>⭐ View Saved Feeds</strong></p>
+    '''
