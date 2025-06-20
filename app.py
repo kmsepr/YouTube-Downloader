@@ -180,8 +180,143 @@ def itunes_search():
 # ────── Frontend UI ──────
 @app.route('/')
 def homepage():
-    with open("frontend.html") as f:
-        return f.read()
+    return '''
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320">
+<title>🎧 Podcast</title>
+<style>
+body{font-family:sans-serif;font-size:14px;margin:4px}
+input,button{width:100%;margin:4px 0}
+.card{border:1px solid #ccc;padding:6px;margin-top:8px;border-radius:8px;background:#fafafa}
+.tiny{font-size:11px;color:#555}
+audio{width:100%;margin-top:5px}
+#sidebar{position:fixed;top:0;left:-80%;width:80%;height:100%;background:#eee;z-index:9;padding:10px;transition:.3s}
+#sidebar.open{left:0}
+#toggle{position:fixed;top:10px;left:10px;font-size:20px;z-index:10;background:#ddd;padding:2px 6px;border-radius:4px}
+</style>
+</head><body>
+<div id="toggle" onclick="toggleSidebar()">☰</div>
+<div id="sidebar">
+  <b>⭐ Favourites</b>
+  <div id="favList"></div>
+</div>
+
+<h3>🎧 Podcast Player</h3>
+<input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add RSS</button>
+<h4>🔍 Search (iTunes)</h4>
+<input id="searchInput" placeholder="Search podcasts"><button onclick="searchPodcasts()">🔍 Search</button>
+<div id="results"></div>
+
+<script>
+const B = location.origin;
+let epOffset = 0, currentId = '', state = 'home';
+function e(id){ return document.getElementById(id); }
+
+function toggleSidebar(){
+  let sb = e("sidebar");
+  sb.classList.toggle("open");
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "1") toggleSidebar();
+});
+
+async function addRss() {
+  await fetch('/api/add_by_rss', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rss_url:e('rss').value})
+  });
+  alert('Added!');
+}
+
+async function addRssFromSearch(rss) {
+  await fetch('/api/add_by_rss', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rss_url:rss})
+  });
+  alert("Added to favorites!");
+  loadFavs();
+}
+
+async function searchPodcasts() {
+  const q = e('searchInput').value.trim();
+  if (!q) return;
+  let r = await fetch('/api/itunes_search?q=' + encodeURIComponent(q));
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.title}</b><br><span class="tiny">${p.author || ''}</span><br>
+    <img src="${p.cover || ''}" width="100"><br>
+    <button onclick="addRssFromSearch('${p.rss}')">❤️ Add</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function loadFavs() {
+  let r = await fetch('/api/favorites');
+  let d = await r.json();
+  let fl = e('favList');
+  fl.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.innerHTML = `<b>${p.title}</b><br>
+      <span class="tiny">${p.author}</span><br>
+      <button onclick="loadEp('${p.podcast_id}', '${p.cover_url}')">🎧 Episodes</button>
+      <button onclick="deleteFeed('${p.podcast_id}')">🗑</button><hr>`;
+    fl.appendChild(div);
+  });
+}
+loadFavs();
+
+async function deleteFeed(id) {
+  if (!confirm('Are you sure?')) return;
+  await fetch('/api/delete_podcast/' + encodeURIComponent(id), { method: 'DELETE' });
+  loadFavs();
+}
+
+async function loadEp(id, cover) {
+  currentId = id; epOffset = 0;
+  e('results').innerHTML = '⏳ Loading...';
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d = await r.json();
+  d.forEach(ep => ep.cover = cover);
+  showEpisodes(d, true);
+}
+
+async function loadMore() {
+  epOffset += 5;
+  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+  let d = await r.json();
+  showEpisodes(d, false);
+}
+
+function showEpisodes(data, reset) {
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  data.forEach(ep => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${ep.title}</b><br>
+      <span class="tiny">${ep.pub_date}</span><br>
+      <img src="${ep.cover || ''}" width="100"><br>
+      <p>${ep.description || ''}</p>
+      <audio controls><source src="${ep.audio_url}" type="audio/mpeg"></audio>`;
+    o.appendChild(div);
+  });
+  if (data.length === 5) {
+    let b = document.createElement('button');
+    b.innerText = '⬇️ Load More';
+    b.onclick = loadMore;
+    o.appendChild(b);
+  }
+}
+</script>
+</body></html>
+'''
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
