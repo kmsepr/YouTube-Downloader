@@ -3,6 +3,7 @@ import sqlite3
 import requests
 import feedparser
 from flask import Flask, request, jsonify
+from dateutil import parser as date_parser  # ← added for date parsing
 
 app = Flask(__name__)
 DB_FILE = 'podcasts.db'
@@ -34,6 +35,8 @@ def init_db():
             FOREIGN KEY(podcast_id) REFERENCES podcasts(podcast_id)
         )
     ''')
+    # Index to ensure sorting by pub_date is fast and correct
+    c.execute('CREATE INDEX IF NOT EXISTS idx_episode_sort ON episodes(podcast_id, pub_date DESC)')
     conn.commit()
     conn.close()
 
@@ -132,14 +135,18 @@ def get_episodes(pid):
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
-            if enc['href'].startswith('http') and '.mp3' in enc['href']:
+            if enc['href'].startswith('http') and ('.mp3' in enc['href'] or 'audio' in enc['type']):
                 audio = enc['href']
                 break
         if not audio:
             continue
         title = item.get('title', '')
         desc = item.get('summary', '') or item.get('description', '')
-        pub_date = item.get('published', '')
+        raw_date = item.get('published', '') or item.get('pubDate', '')
+        try:
+            pub_date = date_parser.parse(raw_date).isoformat()
+        except:
+            pub_date = '1970-01-01T00:00:00'
 
         c.execute('''
             INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
