@@ -30,7 +30,7 @@ def init_db():
             description TEXT,
             audio_url TEXT,
             pub_date TEXT,
-            duration INTEGER,
+            duration TEXT,
             FOREIGN KEY(podcast_id) REFERENCES podcasts(podcast_id)
         )
     ''')
@@ -39,18 +39,18 @@ def init_db():
 
 init_db()
 
-# ─── SEARCH PODCASTS (PodcastIndex) ──────
+# ─── iTunes Podcast Search ───────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
     try:
-        res = requests.get(f'https://api.podcastindex.org/api/1.0/search/byterm?q={query}',
-                           headers={'User-Agent': 'PodApp', 'X-Auth-Date': '0', 'X-Auth-Key': '000'})
-        return jsonify(res.json().get('feeds', []))
+        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
+        data = res.json()
+        return jsonify(data.get('results', []))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD BY RSS URL ──────────────────────
+# ─── Add Podcast by RSS ──────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -65,7 +65,7 @@ def add_by_rss():
     podcast_id = rss_url
     title = feed.feed.get('title', 'Untitled')
     author = feed.feed.get('author', 'Unknown')
-    image = feed.feed.get('image', {}).get('href', '')
+    image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -77,7 +77,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── GET FAVORITE PODCASTS ───────────────
+# ─── Favorites List ──────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -87,12 +87,11 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET PAGINATED EPISODES ─────────────
+# ─── Get Episodes ────────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
-    limit = 5
-
+    limit = 9
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
@@ -101,7 +100,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
-    # Fetch & save if not in DB
+    # Not in DB, fetch from feed
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -114,7 +113,7 @@ def get_episodes(pid):
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
-            if enc['href'].startswith('http') and enc['href'].endswith('.mp3'):
+            if enc['href'].startswith('http'):
                 audio = enc['href']
                 break
         if not audio:
@@ -122,12 +121,12 @@ def get_episodes(pid):
         title = item.get('title', '')
         desc = item.get('summary', '') or item.get('description', '')
         pub_date = item.get('published', '')
-
+        duration = item.get('itunes_duration', '')
         c.execute('''
             INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            pid, eid, title, desc, audio, pub_date, 0
+            pid, eid, title, desc, audio, pub_date, duration
         ))
         all_eps.append({
             'episode_id': eid,
@@ -135,56 +134,112 @@ def get_episodes(pid):
             'description': desc,
             'audio_url': audio,
             'pub_date': pub_date,
-            'duration': 0
+            'duration': duration
         })
     conn.commit()
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# ─── UI HOMEPAGE ────────────────────────
+# ─── UI ──────────────────────────────────
 @app.route('/')
 def homepage():
     return '''
 <!DOCTYPE html><html><head><meta name="viewport" content="width=320">
 <title>Podcast</title>
-<style>body{font-family:sans-serif;font-size:14px;margin:4px}
+<style>
+body{font-family:sans-serif;font-size:14px;margin:4px}
 input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
-.tiny{font-size:11px;color:#666}</style></head>
-<body>
+.tiny{font-size:11px;color:#666} .favbtn{font-size:12px;background:#eef}
+</style></head><body>
 <h3>🎧 Podcast</h3>
+<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
 <input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add by RSS</button>
-<button onclick="loadFavs()">⭐ Favorites</button>
+<button onclick="showFavs()">⭐ My Favorites</button>
 <div id="results"></div>
+
 <script>
 const B = location.origin;
 function e(id){return document.getElementById(id)}
-async function search(){let q=e('q').value;
-let r=await fetch(`/api/search?q=${encodeURIComponent(q)}`);let d=await r.json();
-let o=e('results');o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');
-div.className='card';div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.url}</span><br>
-<button onclick="addFeed('${p.url}')">➕ Add</button>`;o.appendChild(div);})}
-async function addFeed(url){await fetch('/api/add_by_rss',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({rss_url:url})});alert('Added!');}
-async function addRss(){addFeed(e('rss').value)}
-async function loadFavs(){let r=await fetch('/api/favorites');let d=await r.json();let o=e('results');
-o.innerHTML='';d.forEach(p=>{let div=document.createElement('div');div.className='card';
-div.innerHTML=`<b>${p.title}</b><br><span class="tiny">${p.author}</span><br>
-<button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;o.appendChild(div);})}
-let epOffset=0,currentId='';
-async function loadEp(id){currentId=id;epOffset=0;
-e('results').innerHTML='⏳ Loading...';let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
-let d=await r.json();showEpisodes(d,true);}
-async function loadMore(){epOffset+=5;
-let r=await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-let d=await r.json();showEpisodes(d,false);}
-function showEpisodes(data,reset){let o=e('results');
-if(reset) o.innerHTML='';data.forEach(ep=>{let div=document.createElement('div');
-div.className='card';div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-<p>${ep.description||''}</p><a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;o.appendChild(div);});
-if(data.length===5){let btn=document.createElement('button');btn.innerText='⏬ Load More';
-btn.onclick=loadMore;o.appendChild(btn);}}
-</script></body></html>
+
+document.addEventListener('keydown', (ev)=>{
+  if(ev.key==='1') showFavs();
+});
+
+async function search(){
+  let q=e('q').value;
+  let r=await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  let d=await r.json(); let o=e('results'); o.innerHTML='';
+  d.forEach(p=>{
+    if(!p.feedUrl) return;
+    let div=document.createElement('div');
+    div.className='card';
+    div.innerHTML=`<b>${p.collectionName}</b><br>
+    <span class='tiny'>${p.artistName}</span><br>
+    <button onclick="addFeed('${p.feedUrl}')">➕ Add</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function addFeed(url){
+  await fetch('/api/add_by_rss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rss_url:url})});
+  saveFav(url);
+  alert('Added to Favorites!');
+}
+
+function saveFav(url){
+  let favs = JSON.parse(localStorage.getItem('favs')||'[]');
+  if(!favs.includes(url)){favs.push(url);localStorage.setItem('favs',JSON.stringify(favs));}
+}
+
+function removeFav(url){
+  let favs = JSON.parse(localStorage.getItem('favs')||'[]');
+  localStorage.setItem('favs', JSON.stringify(favs.filter(x=>x!==url)));
+  showFavs();
+}
+
+async function showFavs(){
+  let r = await fetch('/api/favorites'); let d = await r.json();
+  let o=e('results'); o.innerHTML='';
+  let favs = JSON.parse(localStorage.getItem('favs')||'[]');
+  d.filter(p=>favs.includes(p.rss_url)).forEach(p=>{
+    let div=document.createElement('div'); div.className='card';
+    div.innerHTML=`<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
+    <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
+    <button class='favbtn' onclick="removeFav('${p.rss_url}')">🗑️ Remove</button>`;
+    o.appendChild(div);
+  });
+}
+
+let epOffset=0, currentId='';
+async function loadEp(id){
+  currentId=id; epOffset=0; e('results').innerHTML='⏳ Loading...';
+  let r=await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d=await r.json(); showEpisodes(d,true);
+}
+
+async function loadMore(){
+  epOffset+=9;
+  let r=await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+  let d=await r.json(); showEpisodes(d,false);
+}
+
+function showEpisodes(data,reset){
+  let o=e('results'); if(reset) o.innerHTML='';
+  data.forEach(ep=>{
+    let div=document.createElement('div'); div.className='card';
+    div.innerHTML=`<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
+    <p>${ep.description||''}</p>
+    <a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;
+    o.appendChild(div);
+  });
+  if(data.length===9){
+    let btn=document.createElement('button'); btn.innerText='⏬ Load More'; btn.onclick=loadMore;
+    o.appendChild(btn);
+  }
+}
+</script>
+</body></html>
 '''
 
 # ─── START APP ───────────────────────────
