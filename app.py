@@ -2,8 +2,9 @@ import os
 import sqlite3
 import requests
 import feedparser
+import hashlib
 from flask import Flask, request, jsonify
-from dateutil import parser as date_parser  # ← added for date parsing
+from dateutil import parser as date_parser
 
 app = Flask(__name__)
 DB_FILE = 'podcasts.db'
@@ -35,7 +36,6 @@ def init_db():
             FOREIGN KEY(podcast_id) REFERENCES podcasts(podcast_id)
         )
     ''')
-    # Index to ensure sorting by pub_date is fast and correct
     c.execute('CREATE INDEX IF NOT EXISTS idx_episode_sort ON episodes(podcast_id, pub_date DESC)')
     conn.commit()
     conn.close()
@@ -71,7 +71,7 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD BY RSS URL ──────────────────────
+# ─── ADD BY RSS URL (with hashed ID) ─────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -83,7 +83,7 @@ def add_by_rss():
     if not feed.entries:
         return jsonify({'error': 'Invalid RSS'}), 400
 
-    podcast_id = rss_url
+    podcast_id = hashlib.md5(rss_url.encode()).hexdigest()
     title = feed.feed.get('title', 'Untitled')
     author = feed.feed.get('author', 'Unknown')
     image = feed.feed.get('image', {}).get('href', '')
@@ -135,7 +135,7 @@ def get_episodes(pid):
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
-            if enc['href'].startswith('http') and ('.mp3' in enc['href'] or 'audio' in enc['type']):
+            if enc['href'].startswith('http') and ('.mp3' in enc['href'] or 'audio' in enc.get('type', '')):
                 audio = enc['href']
                 break
         if not audio:
