@@ -7,10 +7,11 @@ from flask import Flask, request, jsonify
 from dateutil import parser as date_parser
 
 app = Flask(__name__)
-DB_FILE = 'podcasts.db'
+DB_FILE = '/mnt/data/podcasts.db'  # Use Koyeb volume path
 
 # ─── DB INIT ─────────────────────────────
 def init_db():
+    os.makedirs('/mnt/data', exist_ok=True)  # Ensure dir exists
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
@@ -48,14 +49,12 @@ def search_podcasts():
     q = request.args.get('q', '')
     if not q:
         return jsonify([])
-
     try:
         res = requests.get('https://itunes.apple.com/search', params={
             'term': q,
             'media': 'podcast',
             'limit': 25
         })
-
         data = res.json()
         results = []
         for p in data.get('results', []):
@@ -66,12 +65,11 @@ def search_podcasts():
                     'rss': p.get('feedUrl'),
                     'cover': p.get('artworkUrl100')
                 })
-
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD BY RSS URL (with hashed ID) ─────
+# ─── ADD BY RSS URL ──────────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -98,7 +96,7 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
-# ─── GET FAVORITE PODCASTS ───────────────
+# ─── GET FAVORITES ───────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     conn = sqlite3.connect(DB_FILE)
@@ -108,7 +106,7 @@ def get_favorites():
     conn.close()
     return jsonify(rows)
 
-# ─── GET PAGINATED EPISODES ─────────────
+# ─── GET EPISODES ────────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
@@ -122,7 +120,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
-    # Fetch & save if not in DB
+    # Fetch & cache episodes if not already saved
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -166,7 +164,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# ─── UI HOMEPAGE ────────────────────────
+# ─── UI ──────────────────────────────────
 @app.route('/')
 def homepage():
     return '''
