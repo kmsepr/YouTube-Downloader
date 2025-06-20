@@ -101,6 +101,42 @@ def delete_podcast(pid):
     conn.close()
     return jsonify({'message': 'Deleted'})
 
+@app.route('/')
+def index():
+    return '''
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=320">
+  <title>🎧 Podcasts</title>
+  <style>
+    body{font-family:sans-serif;font-size:14px;margin:6px}
+    input,button{width:100%;margin:5px 0;padding:6px}
+    .card{border:1px solid #ccc;padding:5px;margin-top:8px}
+    .tiny{font-size:11px;color:#555}
+    button{background:#eee;border:1px solid #888;border-radius:4px;cursor:pointer}
+  </style>
+</head>
+<body>
+<h3>🎧 Podcast App</h3>
+<input id="q" placeholder="Search podcasts...">
+<button onclick="search()">🔍 Search (iTunes)</button>
+<input id="rss" placeholder="Paste RSS feed">
+<button onclick="addRss()">➕ Add RSS</button>
+<div id="fav-buttons"></div>
+<div style="display:flex;gap:5px;margin:5px 0;">
+  <button onclick="prevPage()">⬅️ Prev</button>
+  <button onclick="nextPage()">➡️ Next</button>
+  <button onclick="refreshFavs()">🔄 Refresh</button>
+</div>
+<div id="results"></div>
+<script>
+// (Paste your full JavaScript here — same as earlier)
+</script>
+</body>
+</html>
+'''
+
 # ─── Main ───────────────────────────────
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
