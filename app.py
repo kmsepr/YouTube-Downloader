@@ -7,8 +7,6 @@ import time
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-
-# ✅ Persistent DB path on Koyeb
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
 
@@ -193,6 +191,34 @@ def search_podcasts():
         })
     return jsonify(results)
 
+# ─── Podcast Search via iTunes ─────────────
+@app.route('/api/itunes_search')
+def itunes_search():
+    q = request.args.get('q', '')
+    if not q:
+        return jsonify([])
+
+    r = requests.get('https://itunes.apple.com/search', params={
+        'term': q,
+        'media': 'podcast',
+        'limit': 25
+    })
+
+    if r.status_code != 200:
+        return jsonify({'error': 'iTunes API failed'}), 500
+
+    data = r.json()
+    results = []
+    for item in data.get('results', []):
+        results.append({
+            'title': item.get('collectionName'),
+            'author': item.get('artistName'),
+            'rss': item.get('feedUrl'),
+            'cover': item.get('artworkUrl100')
+        })
+
+    return jsonify(results)
+
 # ─── Simple Frontend ──────────────────────
 @app.route('/')
 def homepage():
@@ -204,7 +230,9 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 <h3>🎧 Podcast Player</h3>
 <input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add RSS</button>
 <h4>🔍 Search Podcasts</h4>
-<input id="searchInput" placeholder="Type podcast name"><button onclick="searchPodcasts()">🔍 Search</button>
+<input id="searchInput" placeholder="Type podcast name"><br>
+<button onclick="searchPodcasts()">🔍 Index</button>
+<button onclick="searchiTunes()">🍎 iTunes</button>
 <h4>📂 Import OPML</h4>
 <input type="file" id="opmlFile"><button onclick="uploadOPML()">📄 Upload</button>
 <button onclick="loadFavs()">⭐ View Saved Feeds</button>
@@ -236,6 +264,23 @@ async function searchPodcasts() {
   const q = e('searchInput').value.trim();
   if (!q) return;
   let r = await fetch('/api/search_podcasts?q=' + encodeURIComponent(q));
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.title}</b><br><span class="tiny">${p.author || ''}</span><br>
+    <img src="${p.cover || ''}" width="100"><br>
+    <button onclick="addRssFromSearch('${p.rss}')">❤️ Add to Favorites</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function searchiTunes() {
+  const q = e('searchInput').value.trim();
+  if (!q) return;
+  let r = await fetch('/api/itunes_search?q=' + encodeURIComponent(q));
   let d = await r.json();
   let o = e('results');
   o.innerHTML = '';
