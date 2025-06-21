@@ -8,7 +8,6 @@ app = Flask(__name__)
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
 
-# ─── DB INIT ─────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -40,7 +39,6 @@ def init_db():
 
 init_db()
 
-# ─── ITUNES SEARCH ──────────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -50,49 +48,31 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ─── ADD RSS ─────────────────────────────
-@app.route('/api/add_by_rss', methods=['POST'])
-def add_by_rss():
+@app.route('/api/episodes_from_rss', methods=['POST'])
+def episodes_from_rss():
     data = request.get_json()
     rss_url = data.get('rss_url')
     if not rss_url:
-        return jsonify({'error': 'Missing rss_url'}), 400
+        return jsonify([])
 
     feed = feedparser.parse(rss_url)
-    if not feed.entries:
-        return jsonify({'error': 'Invalid RSS'}), 400
+    results = []
+    for item in feed.entries[:10]:
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc['href'].startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        results.append({
+            'title': item.get('title', ''),
+            'description': item.get('summary', '') or item.get('description', ''),
+            'pub_date': item.get('published', ''),
+            'audio_url': audio
+        })
+    return jsonify(results)
 
-    podcast_id = rss_url
-    title = feed.feed.get('title', 'Untitled')
-    author = feed.feed.get('author', 'Unknown')
-    image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
-
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (podcast_id, title, author, image, rss_url))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Added from RSS', 'title': title})
-
-# ─── DELETE PODCAST ─────────────────────
-@app.route('/api/delete_podcast', methods=['POST'])
-def delete_podcast():
-    data = request.get_json()
-    pid = data.get('podcast_id')
-    if not pid:
-        return jsonify({'error': 'Missing podcast_id'}), 400
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('DELETE FROM podcasts WHERE podcast_id = ?', (pid,))
-    c.execute('DELETE FROM episodes WHERE podcast_id = ?', (pid,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Deleted'})
-
-# ─── GET FAVORITES ──────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     offset = int(request.args.get('offset', 0))
@@ -100,8 +80,8 @@ def get_favorites():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    c.execute('SELECT COUNT(*) FROM podcasts')
-    count = c.fetchone()[0]
+    c.execute('SELECT podcast_id FROM podcasts')
+    existing = {row[0] for row in c.fetchall()}
 
     default_feeds = [
         "https://anchor.fm/s/c1cd3f68/podcast/rss",
@@ -122,30 +102,30 @@ def get_favorites():
         "https://anchor.fm/s/46be7940/podcast/rss"
     ]
 
-    if count == 0:
-        for rss_url in default_feeds:
-            try:
-                feed = feedparser.parse(rss_url)
-                if not feed.entries:
-                    continue
-                podcast_id = rss_url
-                title = feed.feed.get('title', 'Untitled')
-                author = feed.feed.get('author', 'Unknown')
-                image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
-                c.execute('''
-                    INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (podcast_id, title, author, image, rss_url))
-            except:
+    for rss_url in default_feeds:
+        if rss_url in existing:
+            continue
+        try:
+            feed = feedparser.parse(rss_url)
+            if not feed.entries:
                 continue
-        conn.commit()
+            podcast_id = rss_url
+            title = feed.feed.get('title', 'Untitled')
+            author = feed.feed.get('author', 'Unknown')
+            image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
+            c.execute('''
+                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (podcast_id, title, author, image, rss_url))
+        except:
+            continue
+    conn.commit()
 
     c.execute('SELECT * FROM podcasts ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
     return jsonify(rows)
 
-# ─── GET EPISODES ───────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
@@ -195,7 +175,6 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
-# ─── HOMEPAGE UI ────────────────────────
 @app.route('/')
 def homepage():
     return '''
@@ -208,7 +187,6 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 <h3>🎧 Podcast</h3>
 <p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
-<input id="rss" placeholder="Paste RSS feed"><button onclick="addRss()">➕ Add by RSS</button>
 <button onclick="showFavs()">⭐ My Favorites</button>
 <div id="results"></div>
 <script>
@@ -226,18 +204,21 @@ async function search(){
         if (!p.feedUrl) return;
         let div = document.createElement('div');
         div.className = 'card';
-        div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br><button onclick="addFeed('${p.feedUrl}')">➕ Add</button>`;
+        div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
+        <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
         o.appendChild(div);
     });
 }
 
-async function addFeed(url){
-    await fetch('/api/add_by_rss', {
+async function previewFeed(url){
+    e('results').innerHTML = '⏳ Fetching episodes...';
+    let r = await fetch('/api/episodes_from_rss', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({rss_url: url})
     });
-    alert('Added to Favorites!');
+    let d = await r.json();
+    showEpisodes(d, true);
 }
 
 let favOffset = 0;
@@ -254,9 +235,7 @@ async function loadFavPage(reset){
     d.forEach(p => {
         let div = document.createElement('div');
         div.className = 'card';
-        div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
-        <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
-        <button onclick="delFav('${p.podcast_id}')">🗑 Delete</button>`;
+        div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br><button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
         o.appendChild(div);
     });
     if (d.length === 5) {
@@ -302,16 +281,6 @@ function showEpisodes(data, reset){
         btn.onclick = loadMore;
         o.appendChild(btn);
     }
-}
-
-async function delFav(pid) {
-    if (!confirm("Delete this podcast?")) return;
-    await fetch('/api/delete_podcast', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({podcast_id: pid})
-    });
-    showFavs();
 }
 </script>
 </body></html>
