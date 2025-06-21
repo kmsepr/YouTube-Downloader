@@ -18,7 +18,8 @@ def init_db():
             title TEXT,
             author TEXT,
             cover_url TEXT,
-            rss_url TEXT
+            rss_url TEXT,
+            last_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     c.execute('''
@@ -120,10 +121,19 @@ def get_favorites():
             continue
     conn.commit()
 
-    c.execute('SELECT * FROM podcasts ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))
+    c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
     return jsonify(rows)
+
+@app.route('/api/mark_played/<path:pid>', methods=['POST'])
+def mark_played(pid):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('UPDATE podcasts SET last_played = CURRENT_TIMESTAMP WHERE podcast_id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Marked as played'})
 
 @app.route('/api/delete_podcast/<path:pid>', methods=['DELETE'])
 def delete_podcast(pid):
@@ -262,6 +272,7 @@ let epOffset = 0, currentId = '';
 async function loadEp(id){
   currentId = id; epOffset = 0;
   e('results').innerHTML = '⏳ Loading...';
+  await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
   let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
   let d = await r.json();
   showEpisodes(d, true);
