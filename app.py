@@ -40,6 +40,7 @@ def init_db():
 
 init_db()
 
+# ─── ITUNES SEARCH ──────────────────────
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -49,6 +50,7 @@ def search_podcasts():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ─── ADD RSS ─────────────────────────────
 @app.route('/api/add_by_rss', methods=['POST'])
 def add_by_rss():
     data = request.get_json()
@@ -75,17 +77,75 @@ def add_by_rss():
     conn.close()
     return jsonify({'message': 'Added from RSS', 'title': title})
 
+# ─── DELETE PODCAST ─────────────────────
+@app.route('/api/delete_podcast', methods=['POST'])
+def delete_podcast():
+    data = request.get_json()
+    pid = data.get('podcast_id')
+    if not pid:
+        return jsonify({'error': 'Missing podcast_id'}), 400
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('DELETE FROM podcasts WHERE podcast_id = ?', (pid,))
+    c.execute('DELETE FROM episodes WHERE podcast_id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Deleted'})
+
+# ─── GET FAVORITES ──────────────────────
 @app.route('/api/favorites')
 def get_favorites():
     offset = int(request.args.get('offset', 0))
     limit = 5
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
+    c.execute('SELECT COUNT(*) FROM podcasts')
+    count = c.fetchone()[0]
+
+    default_feeds = [
+        "https://anchor.fm/s/c1cd3f68/podcast/rss",
+        "https://anchor.fm/s/1c3ac138/podcast/rss",
+        "https://anchor.fm/s/28ef3620/podcast/rss",
+        "https://anchor.fm/s/f662ec14/podcast/rss",
+        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
+        "https://feeds.megaphone.fm/THGU4956605070",
+        "https://feeds.blubrry.com/feeds/2931440.xml",
+        "https://anchor.fm/s/39ae8bf0/podcast/rss",
+        "https://www.omnycontent.com/d/playlist/4bb33704-615b-4054-aae9-ace500fd4197/1773a28d-33f6-4f5b-90fe-af5100be356d/dbe0f12b-7cf1-4d2e-9a7c-af5100bf1545/podcast.rss",
+        "https://feeds.buzzsprout.com/2050847.rss",
+        "https://anchor.fm/s/601dfb4/podcast/rss",
+        "https://muslimcentral.com/audio/the-deen-show/feed/",
+        "https://feeds.buzzsprout.com/1194665.rss",
+        "https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss",
+        "https://www.spreaker.com/show/5085297/episodes/feed",
+        "https://anchor.fm/s/46be7940/podcast/rss"
+    ]
+
+    if count == 0:
+        for rss_url in default_feeds:
+            try:
+                feed = feedparser.parse(rss_url)
+                if not feed.entries:
+                    continue
+                podcast_id = rss_url
+                title = feed.feed.get('title', 'Untitled')
+                author = feed.feed.get('author', 'Unknown')
+                image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
+                c.execute('''
+                    INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (podcast_id, title, author, image, rss_url))
+            except:
+                continue
+        conn.commit()
+
     c.execute('SELECT * FROM podcasts ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
     return jsonify(rows)
 
+# ─── GET EPISODES ───────────────────────
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
@@ -135,6 +195,7 @@ def get_episodes(pid):
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
+# ─── HOMEPAGE UI ────────────────────────
 @app.route('/')
 def homepage():
     return '''
@@ -193,7 +254,9 @@ async function loadFavPage(reset){
     d.forEach(p => {
         let div = document.createElement('div');
         div.className = 'card';
-        div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br><button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
+        div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
+        <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
+        <button onclick="delFav('${p.podcast_id}')">🗑 Delete</button>`;
         o.appendChild(div);
     });
     if (d.length === 5) {
@@ -239,6 +302,16 @@ function showEpisodes(data, reset){
         btn.onclick = loadMore;
         o.appendChild(btn);
     }
+}
+
+async function delFav(pid) {
+    if (!confirm("Delete this podcast?")) return;
+    await fetch('/api/delete_podcast', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({podcast_id: pid})
+    });
+    showFavs();
 }
 </script>
 </body></html>
