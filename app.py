@@ -78,12 +78,6 @@ def episodes_from_rss():
 def get_favorites():
     offset = int(request.args.get('offset', 0))
     limit = 5
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-
-    c.execute('SELECT podcast_id FROM podcasts')
-    existing = {row[0] for row in c.fetchall()}
-
     default_feeds = [
         "https://anchor.fm/s/c1cd3f68/podcast/rss",
         "https://anchor.fm/s/1c3ac138/podcast/rss",
@@ -100,10 +94,10 @@ def get_favorites():
         "https://www.spreaker.com/show/5085297/episodes/feed",
         "https://anchor.fm/s/46be7940/podcast/rss"
     ]
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
     for rss_url in default_feeds:
-        if rss_url in existing:
-            continue
         try:
             feed = feedparser.parse(rss_url)
             if not feed.entries:
@@ -119,9 +113,11 @@ def get_favorites():
             ''', (podcast_id, title, author, image, rss_url))
         except:
             continue
-    conn.commit()
 
-    c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
+    conn.commit()
+    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
+              % ','.join('?' * len(default_feeds)),
+              (*default_feeds, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
     return jsonify(rows)
@@ -134,16 +130,6 @@ def mark_played(pid):
     conn.commit()
     conn.close()
     return jsonify({'message': 'Marked as played'})
-
-@app.route('/api/delete_podcast/<path:pid>', methods=['DELETE'])
-def delete_podcast(pid):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('DELETE FROM episodes WHERE podcast_id = ?', (pid,))
-    c.execute('DELETE FROM podcasts WHERE podcast_id = ?', (pid,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Deleted'})
 
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
@@ -250,8 +236,7 @@ async function loadFavPage(reset){
     let div = document.createElement('div');
     div.className = 'card';
     div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
-    <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>
-    <button onclick="deletePodcast('${p.podcast_id}')">🔚 Delete</button>`;
+    <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
     o.appendChild(div);
   });
   if (d.length === 5) {
@@ -260,12 +245,6 @@ async function loadFavPage(reset){
     btn.onclick = () => { favOffset += 5; loadFavPage(false); };
     o.appendChild(btn);
   }
-}
-
-async function deletePodcast(pid){
-  if (!confirm('Delete this podcast?')) return;
-  await fetch(`/api/delete_podcast/${encodeURIComponent(pid)}`, { method: 'DELETE' });
-  showFavs();
 }
 
 let epOffset = 0, currentId = '';
