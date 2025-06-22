@@ -1,9 +1,8 @@
 import os
-import time
 import sqlite3
 import requests
 import feedparser
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 DB_FILE = '/mnt/data/podcasts.db'
@@ -20,7 +19,6 @@ def init_db():
             author TEXT,
             cover_url TEXT,
             rss_url TEXT,
-            category TEXT,
             last_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -42,89 +40,6 @@ def init_db():
 
 init_db()
 
-@app.route('/')
-def homepage():
-    return Response('''<!DOCTYPE html><html><head><meta name="viewport" content="width=320">
-<title>Podcasts</title>
-<style>
-body { background: #0a0a16; color: #fff; font-family: sans-serif; padding: 6px; font-size: 13px }
-button, select, input { padding: 6px; margin: 4px 2px; }
-.tab { display: inline-block; padding: 5px 10px; border-radius: 6px; background: #222; margin-right: 5px; }
-.active { background: #3399ff; color: white }
-.grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.card { width: 90px; background: #111; border-radius: 10px; overflow: hidden; text-align: center; font-size: 12px; cursor: pointer; }
-.card img { width: 90px; height: 90px; object-fit: cover; }
-#episodes { margin-top: 10px; }
-.ep { margin: 4px 0; padding: 4px; border-bottom: 1px solid #444; }
-audio { width: 100%; margin-top: 4px; }
-</style></head><body>
-<div>
-  <span class="tab active">🎷 Podcasts</span>
-  <span style="float:right">🇮🇳</span>
-</div>
-<h2>Popular Podcasts</h2>
-<div id="list"></div>
-<div id="episodes"></div>
-<script>
-const list = document.getElementById('list');
-const eps = document.getElementById('episodes');
-let episodes = [], current = 0;
-fetch('/api/favorites')
-  .then(r => r.json())
-  .then(data => {
-    let html = '';
-    for (const [cat, pods] of Object.entries(data)) {
-      html += `<h3>${cat}</h3><div class="grid">` +
-              pods.map(p => `<div class='card' onclick="load('${p.rss_url}', '${p.podcast_id}', '${p.title.replace(/'/g, '')}')">
-              <img src='${p.cover_url || 'https://via.placeholder.com/90'}' onerror="this.src='https://via.placeholder.com/90'">
-              ${p.title.split(' ').slice(0, 2).join(' ')}
-              </div>`).join('') + '</div>';
-    }
-    list.innerHTML = html;
-  });
-
-function load(rss_url, pid, title) {
-  fetch('/api/mark_played/' + encodeURIComponent(pid), { method: 'POST' });
-  fetch('/api/episodes_from_rss', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rss_url })
-  })
-  .then(r => r.json())
-  .then(data => {
-    episodes = data;
-    current = 0;
-    showEpisode(title);
-  });
-}
-
-function showEpisode(title) {
-  if (!episodes.length) return;
-  const ep = episodes[current];
-  eps.innerHTML = `<h3>${title}</h3>
-    <div class='ep'>
-      <b>${ep.title}</b><br>
-      <audio controls autoplay src='${ep.audio_url}'></audio><br>
-      <button onclick="prev()">⏮ Prev</button>
-      <button onclick="next()">Next ⏭</button>
-    </div>`;
-}
-
-function next() {
-  if (current < episodes.length - 1) {
-    current++;
-    showEpisode(document.querySelector('h3')?.textContent || 'Podcast');
-  }
-}
-
-function prev() {
-  if (current > 0) {
-    current--;
-    showEpisode(document.querySelector('h3')?.textContent || 'Podcast');
-  }
-}
-</script></body></html>''', mimetype='text/html')
-
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -140,9 +55,10 @@ def episodes_from_rss():
     rss_url = data.get('rss_url')
     if not rss_url:
         return jsonify([])
+
     feed = feedparser.parse(rss_url)
     results = []
-    for item in feed.entries[:3]:
+    for item in feed.entries[:10]:
         audio = ''
         for enc in item.get('enclosures', []):
             if enc.get('href', '').startswith('http'):
@@ -154,26 +70,34 @@ def episodes_from_rss():
             'title': item.get('title', ''),
             'description': item.get('summary', '') or item.get('description', ''),
             'pub_date': item.get('published', ''),
-            'audio_url': audio,
-            'cover_url': (feed.feed.get('image', {}) or {}).get('href', '') or
-                         feed.feed.get('itunes_image', {}).get('href', '')
+            'audio_url': audio
         })
     return jsonify(results)
 
 @app.route('/api/favorites')
 def get_favorites():
     offset = int(request.args.get('offset', 0))
-    limit = 30
-
+    limit = 5
     default_feeds = [
-        ("https://anchor.fm/s/c1cd3f68/podcast/rss", "Malayalam"),
-        ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),
-        ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),
-        ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),
-        ("https://feeds.megaphone.fm/WWO3519750118", "English")
+        "https://anchor.fm/s/c1cd3f68/podcast/rss",
+        "https://anchor.fm/s/1c3ac138/podcast/rss",
+        "https://anchor.fm/s/28ef3620/podcast/rss",
+        "https://anchor.fm/s/f662ec14/podcast/rss",
+        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
+        "https://feeds.megaphone.fm/THGU4956605070",
+        "https://feeds.blubrry.com/feeds/2931440.xml",
+        "https://anchor.fm/s/39ae8bf0/podcast/rss",
+        "https://feeds.buzzsprout.com/2050847.rss",
+        "https://anchor.fm/s/601dfb4/podcast/rss",
+        "https://muslimcentral.com/audio/the-deen-show/feed/",
+        "https://feeds.buzzsprout.com/1194665.rss",
+        "https://www.spreaker.com/show/5085297/episodes/feed",
+        "https://anchor.fm/s/46be7940/podcast/rss"
     ]
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
-    for rss_url, category in default_feeds:
+    for rss_url in default_feeds:
         try:
             feed = feedparser.parse(rss_url)
             if not feed.entries:
@@ -181,34 +105,22 @@ def get_favorites():
             podcast_id = rss_url
             title = feed.feed.get('title', 'Untitled')
             author = feed.feed.get('author', 'Unknown')
-            image = (feed.feed.get('image', {}) or {}).get('href') or \
-                    (feed.feed.get('itunes_image', {}) or {}).get('href') or \
-                    'https://via.placeholder.com/90'
-
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
+            image = (feed.feed.get('image', {}) or {}).get('href', '') or \
+                    feed.feed.get('itunes_image', {}).get('href', '')
             c.execute('''
-                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url, category)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (podcast_id, title, author, image, rss_url, category))
-            conn.commit()
-            conn.close()
-            time.sleep(0.1)
-        except Exception as e:
-            print("Error:", rss_url, str(e))
+                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (podcast_id, title, author, image, rss_url))
+        except:
             continue
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
+    conn.commit()
+    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
+              % ','.join('?' * len(default_feeds)),
+              (*default_feeds, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
-
-    grouped = {}
-    for row in rows:
-        cat = row.get('category', 'Other')
-        grouped.setdefault(cat, []).append(row)
-    return jsonify(grouped)
+    return jsonify(rows)
 
 @app.route('/api/mark_played/<path:pid>', methods=['POST'])
 def mark_played(pid):
@@ -218,6 +130,159 @@ def mark_played(pid):
     conn.commit()
     conn.close()
     return jsonify({'message': 'Marked as played'})
+
+@app.route('/api/podcast/<path:pid>/episodes')
+def get_episodes(pid):
+    offset = int(request.args.get('offset', 0))
+    limit = 9
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+    if rows:
+        conn.close()
+        return jsonify(rows)
+
+    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Podcast not found'}), 404
+
+    feed = feedparser.parse(row[0])
+    all_eps = []
+    for item in feed.entries:
+        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc.get('href', '').startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        title = item.get('title', '')
+        desc = item.get('summary', '') or item.get('description', '')
+        pub_date = item.get('published', '')
+        duration = item.get('itunes_duration', '')
+        c.execute('''
+            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (pid, eid, title, desc, audio, pub_date, duration))
+        all_eps.append({
+            'episode_id': eid,
+            'title': title,
+            'description': desc,
+            'audio_url': audio,
+            'pub_date': pub_date,
+            'duration': duration
+        })
+    conn.commit()
+    conn.close()
+    return jsonify(all_eps[offset:offset + limit])
+
+@app.route('/')
+def homepage():
+    return '''
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
+body{font-family:sans-serif;font-size:14px;margin:4px}
+input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+.tiny{font-size:11px;color:#666}
+</style></head><body><h3>🎧 Podcast</h3>
+<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
+<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
+<button onclick="showFavs()">⭐ My Favorites</button>
+<div id="results"></div>
+<script>
+const B = location.origin;
+function e(id){return document.getElementById(id);}
+document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
+
+async function search(){
+  let q = e('q').value;
+  let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    if (!p.feedUrl) return;
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
+    <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function previewFeed(url){
+  e('results').innerHTML = '⏳ Fetching episodes...';
+  let r = await fetch('/api/episodes_from_rss', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rss_url: url})
+  });
+  let d = await r.json();
+  showEpisodes(d, true);
+}
+
+let favOffset = 0;
+async function showFavs(){ favOffset = 0; loadFavPage(true); }
+
+async function loadFavPage(reset){
+  let r = await fetch(`/api/favorites?offset=${favOffset}`);
+  let d = await r.json();
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
+    <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
+    o.appendChild(div);
+  });
+  if (d.length === 5) {
+    let btn = document.createElement('button');
+    btn.innerText = '⏬ More';
+    btn.onclick = () => { favOffset += 5; loadFavPage(false); };
+    o.appendChild(btn);
+  }
+}
+
+let epOffset = 0, currentId = '';
+async function loadEp(id){
+  currentId = id; epOffset = 0;
+  e('results').innerHTML = '⏳ Loading...';
+  await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d = await r.json();
+  showEpisodes(d, true);
+}
+
+async function loadMore(){
+  epOffset += 9;
+  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+  let d = await r.json();
+  showEpisodes(d, false);
+}
+
+function showEpisodes(data, reset){
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  data.forEach(ep => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
+    <p>${ep.description || ''}</p><a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;
+    o.appendChild(div);
+  });
+  if (data.length === 9) {
+    let btn = document.createElement('button');
+    btn.innerText = '⏬ Load More';
+    btn.onclick = loadMore;
+    o.appendChild(btn);
+  }
+}
+</script></body></html>
+'''
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
