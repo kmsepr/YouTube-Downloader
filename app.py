@@ -2,7 +2,6 @@ import os
 import sqlite3
 import requests
 import feedparser
-import threading
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -40,98 +39,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-@app.route('/')
-def homepage():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Podcast Player</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: sans-serif; padding: 1rem; max-width: 600px; margin: auto; }
-            input, button { font-size: 1rem; padding: 0.5rem; margin: 0.2rem; }
-            .card { border: 1px solid #ccc; padding: 1rem; margin: 0.5rem 0; border-radius: 8px; }
-            audio { width: 100%; margin-top: 0.5rem; }
-        </style>
-    </head>
-    <body>
-        <h2>🎧 Podcast Player</h2>
-        <input id="searchBox" placeholder="Search podcasts..." />
-        <button onclick="search()">Search</button>
-        <h3>Results</h3>
-        <div id="results"></div>
-        <h3>Favorites</h3>
-        <button onclick="loadFavorites()">Refresh</button>
-        <div id="favorites"></div>
-
-        <script>
-        function search() {
-            const query = document.getElementById('searchBox').value;
-            fetch('/api/search?q=' + encodeURIComponent(query))
-                .then(r => r.json())
-                .then(data => {
-                    const results = document.getElementById('results');
-                    results.innerHTML = '';
-                    data.forEach(p => {
-                        const el = document.createElement('div');
-                        el.className = 'card';
-                        el.innerHTML = `
-                            <b>${p.collectionName}</b><br/>
-                            ${p.artistName}<br/>
-                            <button onclick="loadEpisodes('${p.feedUrl}')">Play Latest</button>
-                        `;
-                        results.appendChild(el);
-                    });
-                });
-        }
-
-        function loadFavorites() {
-            fetch('/api/favorites')
-                .then(r => r.json())
-                .then(data => {
-                    const container = document.getElementById('favorites');
-                    container.innerHTML = '';
-                    data.forEach(p => {
-                        const el = document.createElement('div');
-                        el.className = 'card';
-                        el.innerHTML = `
-                            <b>${p.title}</b><br/>
-                            ${p.author}<br/>
-                            <button onclick="loadEpisodes('${p.podcast_id}')">Play</button>
-                        `;
-                        container.appendChild(el);
-                    });
-                });
-        }
-
-        function loadEpisodes(pid) {
-            fetch(`/api/podcast/${encodeURIComponent(pid)}/episodes`)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.length) {
-                        const ep = data[0];
-                        const player = document.createElement('div');
-                        player.className = 'card';
-                        player.innerHTML = `
-                            <h4>${ep.title}</h4>
-                            <audio controls src="${ep.audio_url}"></audio>
-                            <p>${ep.description}</p>
-                        `;
-                        document.body.appendChild(player);
-                        fetch('/api/mark_played/' + encodeURIComponent(pid), { method: 'POST' });
-                    } else {
-                        alert('No episode found!');
-                    }
-                });
-        }
-
-        loadFavorites();
-        </script>
-    </body>
-    </html>
-    """
 
 @app.route('/api/search')
 def search_podcasts():
@@ -187,7 +94,6 @@ def get_favorites():
         "https://www.spreaker.com/show/5085297/episodes/feed",
         "https://anchor.fm/s/46be7940/podcast/rss"
     ]
-
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
@@ -209,20 +115,11 @@ def get_favorites():
             continue
 
     conn.commit()
-    placeholders = ','.join('?' for _ in default_feeds)
-    c.execute(f'''
-        SELECT * FROM podcasts
-        WHERE podcast_id IN ({placeholders})
-        ORDER BY last_played DESC
-        LIMIT ? OFFSET ?
-    ''', (*default_feeds, limit, offset))
+    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
+              % ','.join('?' * len(default_feeds)),
+              (*default_feeds, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
-
-    # Prefetch episodes
-    for p in rows:
-        threading.Thread(target=lambda url=f"{request.host_url}api/podcast/{p['podcast_id']}/episodes": requests.get(url)).start()
-
     return jsonify(rows)
 
 @app.route('/api/mark_played/<path:pid>', methods=['POST'])
@@ -237,7 +134,7 @@ def mark_played(pid):
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
-    limit = 1
+    limit = 9
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
@@ -282,6 +179,134 @@ def get_episodes(pid):
     conn.commit()
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
+
+@app.route('/')
+def homepage():
+    return '''
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
+body{font-family:sans-serif;font-size:14px;margin:4px}
+input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+.tiny{font-size:11px;color:#666} audio{width:100%; margin-top:5px}
+</style></head><body><h3>🎧 Podcast</h3>
+<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
+<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
+<button onclick="showFavs()">⭐ My Favorites</button>
+<div id="results"></div>
+<div id="playerBox" style="display:none">
+  <div class="card">
+    <b id="epTitle"></b><br><span class="tiny" id="epDate"></span><br>
+    <audio id="player" controls></audio><br>
+    <button onclick="prevEp()">⏮️</button>
+    <button onclick="togglePlay()">⏯️</button>
+    <button onclick="nextEp()">⏭️</button>
+  </div>
+</div>
+<script>
+const B = location.origin;
+function e(id){return document.getElementById(id);}
+document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
+
+async function search(){
+  let q = e('q').value;
+  let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  let d = await r.json();
+  let o = e('results');
+  o.innerHTML = '';
+  d.forEach(p => {
+    if (!p.feedUrl) return;
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
+    <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
+    o.appendChild(div);
+  });
+}
+
+async function previewFeed(url){
+  e('results').innerHTML = '⏳ Fetching latest episode...';
+  let r = await fetch('/api/episodes_from_rss', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rss_url: url})
+  });
+  let d = await r.json();
+  if (d.length) showPlayer(d, true);
+  else e('results').innerHTML = '❌ No episodes found.';
+}
+
+let favOffset = 0;
+async function showFavs(){ favOffset = 0; loadFavPage(true); }
+
+async function loadFavPage(reset){
+  let r = await fetch(`/api/favorites?offset=${favOffset}`);
+  let d = await r.json();
+  let o = e('results');
+  if (reset) o.innerHTML = '';
+  d.forEach(p => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
+    <button onclick="loadEp('${p.podcast_id}')">📻 Latest Episode</button>`;
+    o.appendChild(div);
+  });
+  if (d.length === 5) {
+    let btn = document.createElement('button');
+    btn.innerText = '⏬ More';
+    btn.onclick = () => { favOffset += 5; loadFavPage(false); };
+    o.appendChild(btn);
+  }
+}
+
+let currentId = '', currentList = [], currentIndex = 0;
+async function loadEp(id){
+  currentId = id; currentIndex = 0;
+  e('results').innerHTML = '⏳ Loading latest...';
+  await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let d = await r.json();
+  if (d.length) showPlayer(d, true);
+  else e('results').innerHTML = '❌ No episodes found.';
+}
+
+function showPlayer(data, reset){
+  currentList = data;
+  currentIndex = 0;
+  let ep = currentList[currentIndex];
+  e('epTitle').innerText = ep.title;
+  e('epDate').innerText = ep.pub_date;
+  e('player').src = ep.audio_url;
+  e('playerBox').style.display = 'block';
+  e('results').innerHTML = '';
+}
+
+function prevEp(){
+  if (currentIndex > 0) {
+    currentIndex--;
+    let ep = currentList[currentIndex];
+    e('epTitle').innerText = ep.title;
+    e('epDate').innerText = ep.pub_date;
+    e('player').src = ep.audio_url;
+    e('player').play();
+  }
+}
+
+function nextEp(){
+  if (currentIndex < currentList.length - 1) {
+    currentIndex++;
+    let ep = currentList[currentIndex];
+    e('epTitle').innerText = ep.title;
+    e('epDate').innerText = ep.pub_date;
+    e('player').src = ep.audio_url;
+    e('player').play();
+  }
+}
+
+function togglePlay(){
+  let p = e('player');
+  if (p.paused) p.play(); else p.pause();
+}
+</script></body></html>
+'''
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
