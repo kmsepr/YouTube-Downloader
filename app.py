@@ -1,4 +1,5 @@
 import os
+import time
 import sqlite3
 import requests
 import feedparser
@@ -58,7 +59,7 @@ button, select, input { padding: 6px; margin: 4px 2px; }
 audio { width: 100%; margin-top: 4px; }
 </style></head><body>
 <div>
-  <span class="tab active">🎧 Podcasts</span>
+  <span class="tab active">🎷 Podcasts</span>
   <span style="float:right">🇮🇳</span>
 </div>
 <h2>Popular Podcasts</h2>
@@ -101,12 +102,12 @@ function showEpisode(title) {
   if (!episodes.length) return;
   const ep = episodes[current];
   eps.innerHTML = `<h3>${title}</h3>
-  <div class='ep'>
-    <b>${ep.title}</b><br>
-    <audio controls autoplay src='${ep.audio_url}'></audio><br>
-    <button onclick="prev()">⏮ Prev</button>
-    <button onclick="next()">Next ⏭</button>
-  </div>`;
+    <div class='ep'>
+      <b>${ep.title}</b><br>
+      <audio controls autoplay src='${ep.audio_url}'></audio><br>
+      <button onclick="prev()">⏮ Prev</button>
+      <button onclick="next()">Next ⏭</button>
+    </div>`;
 }
 
 function next() {
@@ -122,8 +123,7 @@ function prev() {
     showEpisode(document.querySelector('h3')?.textContent || 'Podcast');
   }
 }
-</script>
-</body></html>''', mimetype='text/html')
+</script></body></html>''', mimetype='text/html')
 
 @app.route('/api/search')
 def search_podcasts():
@@ -155,7 +155,8 @@ def episodes_from_rss():
             'description': item.get('summary', '') or item.get('description', ''),
             'pub_date': item.get('published', ''),
             'audio_url': audio,
-            'cover_url': (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
+            'cover_url': (feed.feed.get('image', {}) or {}).get('href', '') or
+                         feed.feed.get('itunes_image', {}).get('href', '')
         })
     return jsonify(results)
 
@@ -165,30 +166,12 @@ def get_favorites():
     limit = 30
 
     default_feeds = [
-        # 🌟 Malayalam Popular
-        ("https://anchor.fm/s/c1cd3f68/podcast/rss", "Malayalam"),  # Agile Malayali
-        ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),  # Apple Story Club
-        ("https://anchor.fm/s/28ef3620/podcast/rss", "Malayalam"),  # BePositive Malayalam
-        ("https://anchor.fm/s/f662ec14/podcast/rss", "Malayalam"),  # Erci Malayalam
-        ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),  # Cafe Khasak
-        ("https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss", "Malayalam"),  # SoundCloud Malayalam
-
-        # 🌙 Islamic Popular
-        ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),  # Hamza Yusuf
-        ("https://muslimcentral.com/audio/the-deen-show/feed/", "Islamic"),  # The Deen Show
-        ("https://feeds.buzzsprout.com/1194665.rss", "Islamic"),  # The Firsts
-        ("https://feeds.megaphone.fm/RELI7515860194", "Islamic"),  # Quran Weekly
-
-        # 🌐 English Popular
-        ("https://feeds.megaphone.fm/WWO3519750118", "English"),  # TED Talks Daily
-        ("https://feeds.megaphone.fm/stuffyoushouldknow", "English"),  # Stuff You Should Know
-        ("https://feeds.npr.org/510289/podcast.xml", "English"),  # Planet Money
-        ("https://feeds.simplecast.com/54nAGcIl", "English"),  # Lex Fridman
-        ("https://rss.art19.com/the-daily", "English"),  # The Daily (NYTimes)
+        ("https://anchor.fm/s/c1cd3f68/podcast/rss", "Malayalam"),
+        ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),
+        ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),
+        ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),
+        ("https://feeds.megaphone.fm/WWO3519750118", "English")
     ]
-
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
 
     for rss_url, category in default_feeds:
         try:
@@ -201,15 +184,22 @@ def get_favorites():
             image = (feed.feed.get('image', {}) or {}).get('href') or \
                     (feed.feed.get('itunes_image', {}) or {}).get('href') or \
                     'https://via.placeholder.com/90'
+
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
             c.execute('''
                 INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url, category)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (podcast_id, title, author, image, rss_url, category))
+            conn.commit()
+            conn.close()
+            time.sleep(0.1)
         except Exception as e:
-            print("Error parsing", rss_url, "->", str(e))
+            print("Error:", rss_url, str(e))
             continue
 
-    conn.commit()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
     c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
