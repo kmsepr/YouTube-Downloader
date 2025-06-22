@@ -68,6 +68,8 @@ audio { width: 100%; margin-top: 4px; }
 <script>
 const list = document.getElementById('list');
 const eps = document.getElementById('episodes');
+let episodes = [], current = 0;
+
 fetch('/api/favorites').then(r => r.json()).then(data => {
   list.innerHTML = data.map(p => `
     <div class='card' onclick="load('${p.rss_url}', '${p.podcast_id}', '${p.title.replace(/'/g,'')}')">
@@ -76,20 +78,45 @@ fetch('/api/favorites').then(r => r.json()).then(data => {
     </div>
   `).join('');
 });
+
 function load(rss_url, pid, title) {
-  eps.innerHTML = `<h3>${title}</h3>`;
   fetch('/api/mark_played/' + encodeURIComponent(pid), {method: 'POST'});
   fetch('/api/episodes_from_rss', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({rss_url})
-  })
-    .then(r => r.json()).then(data => {
-      eps.innerHTML += data.map(e => `
-        <div class='ep'><b>${e.title}</b><br>
-        <audio controls src='${e.audio_url}'></audio></div>
-      `).join('');
-    });
+  }).then(r => r.json()).then(data => {
+    episodes = data;
+    current = 0;
+    showEpisode(title);
+  });
+}
+
+function showEpisode(title) {
+  if (!episodes.length) return;
+  const ep = episodes[current];
+  eps.innerHTML = `
+    <h3>${title}</h3>
+    <div class='ep'><b>${ep.title}</b><br>
+    <audio controls autoplay src='${ep.audio_url}'></audio><br>
+    <button onclick="prev()">⏮ Prev</button>
+    <button onclick="next()">Next ⏭</button>
+    </div>
+  `;
+}
+
+function next() {
+  if (current < episodes.length - 1) {
+    current++;
+    showEpisode(document.querySelector('h3')?.textContent || 'Podcast');
+  }
+}
+
+function prev() {
+  if (current > 0) {
+    current--;
+    showEpisode(document.querySelector('h3')?.textContent || 'Podcast');
+  }
 }
 </script>
 </body></html>''', mimetype='text/html')
