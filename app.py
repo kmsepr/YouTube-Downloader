@@ -94,7 +94,6 @@ function load(rss_url, pid, title) {
 </script>
 </body></html>''', mimetype='text/html')
 
-
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -103,7 +102,6 @@ def search_podcasts():
         return jsonify(res.json().get('results', []))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/episodes_from_rss', methods=['POST'])
 def episodes_from_rss():
@@ -130,34 +128,33 @@ def episodes_from_rss():
         })
     return jsonify(results)
 
-
 @app.route('/api/favorites')
 def get_favorites():
     offset = int(request.args.get('offset', 0))
     limit = 30
     default_feeds = [
         "https://anchor.fm/s/c1cd3f68/podcast/rss",
-        "https://anchor.fm/s/1c3ac138/podcast/rss",
-        "https://anchor.fm/s/28ef3620/podcast/rss",
-        "https://anchor.fm/s/f662ec14/podcast/rss",
-        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
-        "https://feeds.megaphone.fm/THGU4956605070",
-        "https://feeds.blubrry.com/feeds/2931440.xml",
-        "https://anchor.fm/s/39ae8bf0/podcast/rss",
-        "https://www.omnycontent.com/d/playlist/4bb33704-615b-4054-aae9-ace500fd4197/1773a28d-33f6-4f5b-90fe-af5100be356d/dbe0f12b-7cf1-4d2e-9a7c-af5100bf1545/podcast.rss",
-        "https://feeds.buzzsprout.com/2050847.rss",
-        "https://anchor.fm/s/601dfb4/podcast/rss",
-        "https://muslimcentral.com/audio/the-deen-show/feed/",
-        "https://feeds.buzzsprout.com/1194665.rss",
-        "https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss",
-        "https://www.spreaker.com/show/5085297/episodes/feed",
-        "https://anchor.fm/s/46be7940/podcast/rss"
+        "https://anchor.fm/s/1c3ac138/podcast/rss"
     ]
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
+    # Add at least one hardcoded podcast
+    c.execute('''
+        INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        'demo-podcast',
+        'Agile Malayali',
+        'Unknown',
+        'https://via.placeholder.com/90',
+        'https://anchor.fm/s/c1cd3f68/podcast/rss'
+    ))
+
     for rss_url in default_feeds:
         try:
             feed = feedparser.parse(rss_url)
+            print(f"Parsed feed: {rss_url}, entries: {len(feed.entries)}")
             if not feed.entries:
                 continue
             podcast_id = rss_url
@@ -168,14 +165,15 @@ def get_favorites():
                 INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
                 VALUES (?, ?, ?, ?, ?)
             ''', (podcast_id, title, author, image, rss_url))
-        except:
+        except Exception as e:
+            print(f"Error parsing feed {rss_url}: {e}")
             continue
+
     conn.commit()
     c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
     return jsonify(rows)
-
 
 @app.route('/api/mark_played/<path:pid>', methods=['POST'])
 def mark_played(pid):
@@ -185,5 +183,25 @@ def mark_played(pid):
     conn.commit()
     conn.close()
     return jsonify({'message': 'Marked as played'})
+
+@app.route('/api/debug_feeds')
+def debug_feeds():
+    results = []
+    test_feeds = [
+        "https://anchor.fm/s/c1cd3f68/podcast/rss",
+        "https://feeds.buzzsprout.com/2050847.rss"
+    ]
+    for rss_url in test_feeds:
+        try:
+            feed = feedparser.parse(rss_url)
+            results.append({
+                'url': rss_url,
+                'title': feed.feed.get('title', 'N/A'),
+                'entries': len(feed.entries)
+            })
+        except Exception as e:
+            results.append({'url': rss_url, 'error': str(e)})
+    return jsonify(results)
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
