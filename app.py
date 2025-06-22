@@ -184,18 +184,63 @@ def get_episodes(pid):
 @app.route('/')
 def homepage():
     return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320">
+<!DOCTYPE html><html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Podcast</title>
 <style>
-  body { font-family: sans-serif; font-size: 14px; margin: 4px }
-  input, button { width: 100%; margin: 4px 0 }
-  .card { border: 1px solid #ccc; padding: 5px; margin-top: 6px; border-radius: 10px }
-  .tiny { font-size: 11px; color: #666 }
-</style></head><body><h3>🎧 Podcast</h3>
-<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
-<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
+  body {
+    font-family: sans-serif;
+    font-size: 14px;
+    margin: 4px;
+    background: #f5f5f5;
+  }
+  input, button {
+    width: 100%;
+    margin: 6px 0;
+    padding: 6px;
+    font-size: 14px;
+  }
+  .card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    padding: 10px;
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.1s ease-in-out;
+  }
+  .card:hover {
+    transform: scale(1.02);
+  }
+  .card img {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    margin-right: 10px;
+    object-fit: cover;
+  }
+  .info {
+    flex: 1;
+  }
+  .title {
+    font-weight: bold;
+    font-size: 15px;
+  }
+  .tiny {
+    font-size: 11px;
+    color: #666;
+  }
+</style>
+</head><body>
+<h3>🎧 Podcast</h3>
+<input id="q" placeholder="Search...">
+<button onclick="search()">🔍 Search</button>
 <button onclick="showFavs()">⭐ My Favorites</button>
 <div id="results"></div>
+
 <script>
 const B = location.origin;
 function e(id) { return document.getElementById(id); }
@@ -210,8 +255,13 @@ async function search() {
     if (!p.feedUrl) return;
     let div = document.createElement('div');
     div.className = 'card';
-    div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
-    <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
+    div.onclick = () => previewFeed(p.feedUrl);
+    div.innerHTML = `
+      <img src="${p.artworkUrl100 || ''}">
+      <div class="info">
+        <div class="title">${p.collectionName}</div>
+        <div class="tiny">${p.artistName}</div>
+      </div>`;
     o.appendChild(div);
   });
 }
@@ -240,8 +290,13 @@ async function loadFavPage(reset) {
   d.forEach(p => {
     let div = document.createElement('div');
     div.className = 'card';
-    div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
-    <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
+    div.onclick = () => loadEp(p.podcast_id);
+    div.innerHTML = `
+      <img src="${p.cover_url || ''}">
+      <div class="info">
+        <div class="title">${p.title}</div>
+        <div class="tiny">${p.author}</div>
+      </div>`;
     o.appendChild(div);
   });
   if (d.length === 5) {
@@ -274,13 +329,16 @@ function showEpisodes(data) {
   let ep = data[0];
   let div = document.createElement('div');
   div.className = 'card';
-  div.innerHTML = `<b>${ep.title}</b><br>
-    <span class="tiny">${ep.pub_date}</span><br>
-    <p>${ep.description || ''}</p>
-    <audio id="audioPlayer" controls autoplay style="width:100%">
-      <source src="${ep.audio_url}" type="audio/mpeg">
-    </audio><br>
-    <a href="${ep.audio_url}" target="_blank">⬇️ Download</a>`;
+  div.innerHTML = `
+    <div class="info">
+      <div class="title">${ep.title}</div>
+      <div class="tiny">${ep.pub_date}</div>
+      <p>${ep.description || ''}</p>
+      <audio id="audioPlayer" controls autoplay style="width:100%">
+        <source src="${ep.audio_url}" type="audio/mpeg">
+      </audio>
+      <a href="${ep.audio_url}" target="_blank">⬇️ Download</a>
+    </div>`;
   o.appendChild(div);
 
   let nav = document.createElement('div');
@@ -299,7 +357,6 @@ function showEpisodes(data) {
   o.appendChild(nav);
 }
 </script></body></html>
-'''
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
