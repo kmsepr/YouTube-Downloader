@@ -41,6 +41,34 @@ def init_db():
 
 init_db()
 
+@app.route('/')
+def homepage():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Podcast App</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body { font-family: sans-serif; padding: 1rem; line-height: 1.6; }
+            h1 { color: #333; }
+            code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+            ul { padding-left: 20px; }
+        </style>
+    </head>
+    <body>
+        <h1>🎙️ Podcast API is Running</h1>
+        <p>Use these API endpoints:</p>
+        <ul>
+            <li><code>/api/search?q=example</code> – Search for podcasts</li>
+            <li><code>/api/favorites</code> – Load default favorite podcasts</li>
+            <li><code>/api/podcast/&lt;podcast_id&gt;/episodes</code> – Fetch episodes</li>
+            <li><code>/api/mark_played/&lt;podcast_id&gt;</code> – Mark podcast as played</li>
+        </ul>
+    </body>
+    </html>
+    """
+
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -127,7 +155,7 @@ def get_favorites():
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
 
-    # Prefetch episodes in background
+    # Prefetch episodes
     for p in rows:
         threading.Thread(target=lambda url=f"{request.host_url}api/podcast/{p['podcast_id']}/episodes": requests.get(url)).start()
 
@@ -154,7 +182,6 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
-    # If not in DB, fetch from feed
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -191,10 +218,6 @@ def get_episodes(pid):
     conn.commit()
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
-
-@app.route('/')
-def homepage():
-    return open("/app/static/index.html").read()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
