@@ -185,7 +185,7 @@ def homepage():
     return '''
 <!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
 body{font-family:sans-serif;font-size:14px;margin:4px}
-input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
+input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px;border-radius:10px}
 .tiny{font-size:11px;color:#666}
 </style></head><body><h3>🎧 Podcast</h3>
 <p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
@@ -249,37 +249,65 @@ async function loadFavPage(reset){
 
 let epOffset = 0, currentId = '';
 async function loadEp(id){
-  currentId = id; epOffset = 0;
+  currentId = id;
+  epOffset = 0;
   e('results').innerHTML = '⏳ Loading...';
   await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
-  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
+  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=${epOffset}`);
   let d = await r.json();
   showEpisodes(d, true);
-}
-
-async function loadMore(){
-  epOffset += 9;
-  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-  let d = await r.json();
-  showEpisodes(d, false);
 }
 
 function showEpisodes(data, reset){
   let o = e('results');
   if (reset) o.innerHTML = '';
-  data.forEach(ep => {
-    let div = document.createElement('div');
-    div.className = 'card';
-    div.innerHTML = `<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-    <p>${ep.description || ''}</p><a href="${ep.audio_url}" target="_blank">▶️ Play / Download</a>`;
-    o.appendChild(div);
-  });
-  if (data.length === 9) {
-    let btn = document.createElement('button');
-    btn.innerText = '⏬ Load More';
-    btn.onclick = loadMore;
-    o.appendChild(btn);
+
+  if (data.length === 0) {
+    o.innerHTML = 'No episodes found.';
+    return;
   }
+
+  // Show only the latest one
+  let ep = data[0];
+  let div = document.createElement('div');
+  div.className = 'card';
+  div.innerHTML = `<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
+  <p>${ep.description || ''}</p>
+  <audio controls style="width:100%"><source src="${ep.audio_url}" type="audio/mpeg"></audio>
+  <br><a href="${ep.audio_url}" target="_blank">⬇️ Download</a>`;
+  o.appendChild(div);
+
+  // Navigation
+  let navDiv = document.createElement('div');
+  navDiv.style = 'margin-top:10px;text-align:center';
+
+  if (epOffset > 0) {
+    let prev = document.createElement('button');
+    prev.innerText = '⬅️ Previous';
+    prev.onclick = async () => {
+      epOffset -= 1;
+      if (epOffset < 0) epOffset = 0;
+      let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+      let d = await r.json();
+      showEpisodes(d, true);
+    };
+    navDiv.appendChild(prev);
+  }
+
+  if (data.length === 1) {
+    let next = document.createElement('button');
+    next.innerText = '➡️ Next';
+    next.style = 'margin-left:10px';
+    next.onclick = async () => {
+      epOffset += 1;
+      let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+      let d = await r.json();
+      showEpisodes(d, true);
+    };
+    navDiv.appendChild(next);
+  }
+
+  o.appendChild(navDiv);
 }
 </script></body></html>
 '''
