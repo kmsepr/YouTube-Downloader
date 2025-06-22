@@ -196,6 +196,8 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
   <div class="card">
     <b id="epTitle"></b><br><span class="tiny" id="epDate"></span><br>
     <audio id="player" controls></audio><br>
+    <p id="epDesc" style="margin-top:6px"></p>
+    <a id="downloadBtn" href="#" download style="display:inline-block;margin:5px 0">📥 Download MP3</a><br>
     <button onclick="prevEp()">⏮️</button>
     <button onclick="togglePlay()">⏯️</button>
     <button onclick="nextEp()">⏭️</button>
@@ -271,33 +273,31 @@ async function loadEp(id){
 function showPlayer(data, reset){
   currentList = data;
   currentIndex = 0;
-  let ep = currentList[currentIndex];
-  e('epTitle').innerText = ep.title;
-  e('epDate').innerText = ep.pub_date;
-  e('player').src = ep.audio_url;
+  showEpisode(currentList[currentIndex]);
   e('playerBox').style.display = 'block';
   e('results').innerHTML = '';
+}
+
+function showEpisode(ep){
+  e('epTitle').innerText = ep.title;
+  e('epDate').innerText = ep.pub_date;
+  e('epDesc').innerText = ep.description || '';
+  e('player').src = ep.audio_url;
+  e('downloadBtn').href = ep.audio_url;
+  e('player').play();
 }
 
 function prevEp(){
   if (currentIndex > 0) {
     currentIndex--;
-    let ep = currentList[currentIndex];
-    e('epTitle').innerText = ep.title;
-    e('epDate').innerText = ep.pub_date;
-    e('player').src = ep.audio_url;
-    e('player').play();
+    showEpisode(currentList[currentIndex]);
   }
 }
 
 function nextEp(){
   if (currentIndex < currentList.length - 1) {
     currentIndex++;
-    let ep = currentList[currentIndex];
-    e('epTitle').innerText = ep.title;
-    e('epDate').innerText = ep.pub_date;
-    e('player').src = ep.audio_url;
-    e('player').play();
+    showEpisode(currentList[currentIndex]);
   }
 }
 
