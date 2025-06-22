@@ -183,8 +183,7 @@ def get_episodes(pid):
 
 @app.route('/')
 def homepage():
-    return '''
-<!DOCTYPE html><html>
+    return '''<!DOCTYPE html><html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Podcast</title>
@@ -356,7 +355,6 @@ function showEpisodes(data) {
   nav.appendChild(next);
   o.appendChild(nav);
 }
-</script></body></html>
-
+</script></body></html>'''
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
