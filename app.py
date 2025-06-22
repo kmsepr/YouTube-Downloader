@@ -47,24 +47,88 @@ def homepage():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Podcast App</title>
+        <title>Podcast Player</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: sans-serif; padding: 1rem; line-height: 1.6; }
-            h1 { color: #333; }
-            code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-            ul { padding-left: 20px; }
+            body { font-family: sans-serif; padding: 1rem; max-width: 600px; margin: auto; }
+            input, button { font-size: 1rem; padding: 0.5rem; margin: 0.2rem; }
+            .card { border: 1px solid #ccc; padding: 1rem; margin: 0.5rem 0; border-radius: 8px; }
+            audio { width: 100%; margin-top: 0.5rem; }
         </style>
     </head>
     <body>
-        <h1>🎙️ Podcast API is Running</h1>
-        <p>Use these API endpoints:</p>
-        <ul>
-            <li><code>/api/search?q=example</code> – Search for podcasts</li>
-            <li><code>/api/favorites</code> – Load default favorite podcasts</li>
-            <li><code>/api/podcast/&lt;podcast_id&gt;/episodes</code> – Fetch episodes</li>
-            <li><code>/api/mark_played/&lt;podcast_id&gt;</code> – Mark podcast as played</li>
-        </ul>
+        <h2>🎧 Podcast Player</h2>
+        <input id="searchBox" placeholder="Search podcasts..." />
+        <button onclick="search()">Search</button>
+        <h3>Results</h3>
+        <div id="results"></div>
+        <h3>Favorites</h3>
+        <button onclick="loadFavorites()">Refresh</button>
+        <div id="favorites"></div>
+
+        <script>
+        function search() {
+            const query = document.getElementById('searchBox').value;
+            fetch('/api/search?q=' + encodeURIComponent(query))
+                .then(r => r.json())
+                .then(data => {
+                    const results = document.getElementById('results');
+                    results.innerHTML = '';
+                    data.forEach(p => {
+                        const el = document.createElement('div');
+                        el.className = 'card';
+                        el.innerHTML = `
+                            <b>${p.collectionName}</b><br/>
+                            ${p.artistName}<br/>
+                            <button onclick="loadEpisodes('${p.feedUrl}')">Play Latest</button>
+                        `;
+                        results.appendChild(el);
+                    });
+                });
+        }
+
+        function loadFavorites() {
+            fetch('/api/favorites')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('favorites');
+                    container.innerHTML = '';
+                    data.forEach(p => {
+                        const el = document.createElement('div');
+                        el.className = 'card';
+                        el.innerHTML = `
+                            <b>${p.title}</b><br/>
+                            ${p.author}<br/>
+                            <button onclick="loadEpisodes('${p.podcast_id}')">Play</button>
+                        `;
+                        container.appendChild(el);
+                    });
+                });
+        }
+
+        function loadEpisodes(pid) {
+            fetch(`/api/podcast/${encodeURIComponent(pid)}/episodes`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.length) {
+                        const ep = data[0];
+                        const player = document.createElement('div');
+                        player.className = 'card';
+                        player.innerHTML = `
+                            <h4>${ep.title}</h4>
+                            <audio controls src="${ep.audio_url}"></audio>
+                            <p>${ep.description}</p>
+                        `;
+                        document.body.appendChild(player);
+                        fetch('/api/mark_played/' + encodeURIComponent(pid), { method: 'POST' });
+                    } else {
+                        alert('No episode found!');
+                    }
+                });
+        }
+
+        loadFavorites();
+        </script>
     </body>
     </html>
     """
