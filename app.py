@@ -62,24 +62,27 @@ audio { width: 100%; margin-top: 4px; }
   <span style="float:right">🇮🇳</span>
 </div>
 <h2>Popular Podcasts</h2>
-<div id="list"></div>
+<div id="list">Loading...</div>
 <div id="episodes"></div>
 <script>
 const list = document.getElementById('list');
 const eps = document.getElementById('episodes');
 let episodes = [], current = 0;
+
 fetch('/api/favorites')
   .then(r => r.json())
   .then(data => {
     let html = '';
     for (const [cat, pods] of Object.entries(data)) {
       html += `<h3>${cat}</h3><div class="grid">` +
-              pods.map(p => `<div class='card' onclick="load('${p.rss_url}', '${p.podcast_id}', '${p.title.replace(/'/g, '')}')">
+              pods.map(p => `<div class='card' onclick="load('${p.rss_url}', '${p.podcast_id}', \`${p.title.replace(/`/g, '')}\`)">
               <img src='${p.cover_url || 'https://via.placeholder.com/90'}' onerror="this.src='https://via.placeholder.com/90'">
               ${p.title.split(' ').slice(0, 2).join(' ')}
               </div>`).join('') + '</div>';
     }
     list.innerHTML = html;
+  }).catch(e => {
+    list.innerHTML = 'Failed to load favorites.';
   });
 
 function load(rss_url, pid, title) {
@@ -125,15 +128,6 @@ function prev() {
 </script>
 </body></html>''', mimetype='text/html')
 
-@app.route('/api/search')
-def search_podcasts():
-    query = request.args.get('q', '')
-    try:
-        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
-        return jsonify(res.json().get('results', []))
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/episodes_from_rss', methods=['POST'])
 def episodes_from_rss():
     data = request.get_json()
@@ -168,17 +162,10 @@ def get_favorites():
         ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),
         ("https://anchor.fm/s/28ef3620/podcast/rss", "Malayalam"),
         ("https://anchor.fm/s/f662ec14/podcast/rss", "Malayalam"),
-        ("https://feeds.blubrry.com/feeds/2931440.xml", "Malayalam"),
-        ("https://anchor.fm/s/39ae8bf0/podcast/rss", "Malayalam"),
-        ("https://www.omnycontent.com/.../podcast.rss", "Malayalam"),
         ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),
-        ("https://anchor.fm/s/601dfb4/podcast/rss", "Malayalam"),
-        ("https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss", "Malayalam"),
-        ("https://www.spreaker.com/show/5085297/episodes/feed", "Malayalam"),
-        ("https://anchor.fm/s/46be7940/podcast/rss", "Malayalam"),
+        ("https://feeds.buzzsprout.com/1194665.rss", "Islamic"),
         ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),
         ("https://muslimcentral.com/audio/the-deen-show/feed/", "Islamic"),
-        ("https://feeds.buzzsprout.com/1194665.rss", "Islamic"),
         ("https://feeds.megaphone.fm/THGU4956605070", "English")
     ]
 
@@ -189,16 +176,18 @@ def get_favorites():
         try:
             feed = feedparser.parse(rss_url)
             if not feed.entries:
+                print(f"Skipped: No entries - {rss_url}")
                 continue
             podcast_id = rss_url
             title = feed.feed.get('title', 'Untitled')
             author = feed.feed.get('author', 'Unknown')
-            image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '')
+            image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '') or 'https://via.placeholder.com/90'
             c.execute('''
                 INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url, category)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (podcast_id, title, author, image, rss_url, category))
-        except:
+        except Exception as e:
+            print(f"Error parsing {rss_url}: {e}")
             continue
 
     conn.commit()
