@@ -163,24 +163,32 @@ def episodes_from_rss():
 def get_favorites():
     offset = int(request.args.get('offset', 0))
     limit = 30
+
     default_feeds = [
-        ("https://anchor.fm/s/c1cd3f68/podcast/rss", "Malayalam"),
-        ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),
-        ("https://anchor.fm/s/28ef3620/podcast/rss", "Malayalam"),
-        ("https://anchor.fm/s/f662ec14/podcast/rss", "Malayalam"),
-        ("https://feeds.blubrry.com/feeds/2931440.xml", "Malayalam"),
-        ("https://anchor.fm/s/39ae8bf0/podcast/rss", "Malayalam"),
-        ("https://www.omnycontent.com/d/playlist/.../podcast.rss", "Malayalam"),
-        ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),
-        ("https://anchor.fm/s/601dfb4/podcast/rss", "Malayalam"),
-        ("https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss", "Malayalam"),
-        ("https://www.spreaker.com/show/5085297/episodes/feed", "Malayalam"),
-        ("https://anchor.fm/s/46be7940/podcast/rss", "Malayalam"),
-        ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),
-        ("https://muslimcentral.com/audio/the-deen-show/feed/", "Islamic"),
-        ("https://feeds.buzzsprout.com/1194665.rss", "Islamic"),
-        ("https://feeds.megaphone.fm/THGU4956605070", "English")
+        # 🌟 Malayalam Popular
+        ("https://anchor.fm/s/c1cd3f68/podcast/rss", "Malayalam"),  # Agile Malayali
+        ("https://anchor.fm/s/1c3ac138/podcast/rss", "Malayalam"),  # Apple Story Club
+        ("https://anchor.fm/s/28ef3620/podcast/rss", "Malayalam"),  # BePositive Malayalam
+        ("https://anchor.fm/s/f662ec14/podcast/rss", "Malayalam"),  # Erci Malayalam
+        ("https://feeds.buzzsprout.com/2050847.rss", "Malayalam"),  # Cafe Khasak
+        ("https://feeds.soundcloud.com/users/soundcloud:users:774008737/sounds.rss", "Malayalam"),  # SoundCloud Malayalam
+
+        # 🌙 Islamic Popular
+        ("https://muslimcentral.com/audio/hamza-yusuf/feed/", "Islamic"),  # Hamza Yusuf
+        ("https://muslimcentral.com/audio/the-deen-show/feed/", "Islamic"),  # The Deen Show
+        ("https://feeds.buzzsprout.com/1194665.rss", "Islamic"),  # The Firsts
+        ("https://feeds.megaphone.fm/RELI7515860194", "Islamic"),  # Quran Weekly
+
+        # 🌐 English Popular
+        ("https://feeds.megaphone.fm/WWO3519750118", "English"),  # TED Talks Daily
+        ("https://feeds.megaphone.fm/stuffyoushouldknow", "English"),  # Stuff You Should Know
+        ("https://feeds.npr.org/510289/podcast.xml", "English"),  # Planet Money
+        ("https://feeds.simplecast.com/54nAGcIl", "English"),  # Lex Fridman
+        ("https://rss.art19.com/the-daily", "English"),  # The Daily (NYTimes)
     ]
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
     for rss_url, category in default_feeds:
         try:
@@ -190,22 +198,18 @@ def get_favorites():
             podcast_id = rss_url
             title = feed.feed.get('title', 'Untitled')
             author = feed.feed.get('author', 'Unknown')
-            image = (feed.feed.get('image', {}) or {}).get('href', '') or feed.feed.get('itunes_image', {}).get('href', '') or 'https://via.placeholder.com/90'
-
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
+            image = (feed.feed.get('image', {}) or {}).get('href') or \
+                    (feed.feed.get('itunes_image', {}) or {}).get('href') or \
+                    'https://via.placeholder.com/90'
             c.execute('''
                 INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url, category)
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (podcast_id, title, author, image, rss_url, category))
-            conn.commit()
-            conn.close()
         except Exception as e:
-            print(f"Error parsing {rss_url}: {e}")
+            print("Error parsing", rss_url, "->", str(e))
             continue
 
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
+    conn.commit()
     c.execute('SELECT * FROM podcasts ORDER BY last_played DESC LIMIT ? OFFSET ?', (limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
