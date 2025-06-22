@@ -2,12 +2,13 @@ import os
 import sqlite3
 import requests
 import feedparser
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 DB_FILE = '/mnt/data/podcasts.db'
 os.makedirs('/mnt/data', exist_ok=True)
 
+# ───── DB INIT ─────
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -40,6 +41,8 @@ def init_db():
 
 init_db()
 
+# ───── API ROUTES ─────
+
 @app.route('/api/search')
 def search_podcasts():
     query = request.args.get('q', '')
@@ -55,10 +58,9 @@ def episodes_from_rss():
     rss_url = data.get('rss_url')
     if not rss_url:
         return jsonify([])
-
     feed = feedparser.parse(rss_url)
     results = []
-    for item in feed.entries[:3]:  # Only 3 latest episodes
+    for item in feed.entries[:3]:
         audio = ''
         for enc in item.get('enclosures', []):
             if enc.get('href', '').startswith('http'):
@@ -89,7 +91,6 @@ def get_favorites():
     ]
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
     for rss_url in default_feeds:
         try:
             feed = feedparser.parse(rss_url)
@@ -106,7 +107,6 @@ def get_favorites():
             ''', (podcast_id, title, author, image, rss_url))
         except:
             continue
-
     conn.commit()
     c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
               % ','.join('?' * len(default_feeds)),
@@ -130,6 +130,8 @@ def get_episodes(pid):
     limit = 9
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+
+    # Return stored episodes
     c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     if rows:
@@ -141,6 +143,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
+    # If not found, parse and save
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -149,7 +152,7 @@ def get_episodes(pid):
 
     feed = feedparser.parse(row[0])
     all_eps = []
-    for item in feed.entries[:3]:  # Only latest 3
+    for item in feed.entries[:3]:
         eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
         audio = ''
         for enc in item.get('enclosures', []):
@@ -174,151 +177,93 @@ def get_episodes(pid):
             'pub_date': pub_date,
             'duration': duration
         })
-
     c.execute('SELECT cover_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     cover_url = row[0] if row else ''
     for ep in all_eps:
         ep['cover_url'] = cover_url
-
     conn.commit()
     conn.close()
     return jsonify(all_eps[offset:offset + limit])
 
+# ───── HOMEPAGE ─────
 @app.route('/')
 def homepage():
-    return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title>
+    html = '''
+<!DOCTYPE html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podcast</title>
 <style>
-body{font-family:sans-serif;font-size:14px;margin:4px}
-input,button,select{width:100%;margin:4px 0}
-.card{border:1px solid #ccc;padding:5px;margin-top:6px;border-radius:10px}
-.tiny{font-size:11px;color:#666}
-</style></head><body><h3>🎧 Podcast</h3>
-
-<p class="tiny">🔢 Press 1 to view Favorites</p>
-<input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
-<button onclick="showFavs()">⭐ My Favorites</button>
-<div id="results"></div>
-
+body { font-family: sans-serif; font-size: 14px; margin: 8px }
+input, button { width: 100%; padding: 6px; margin: 6px 0 }
+.card { border: 1px solid #ccc; padding: 6px; border-radius: 8px; margin: 6px 0 }
+.sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 220px; background: #f0f0f0; overflow-y: auto; padding: 10px }
+main { margin-left: 230px }
+audio { width: 100%; margin-top: 6px }
+</style>
+</head><body>
+<div class="sidebar">
+  <h3>Favourites</h3>
+  <div id="favList">Loading...</div>
+</div>
+<main>
+  <h2>Podcast App</h2>
+  <input id="search" placeholder="Search podcast">
+  <button onclick="search()">Search</button>
+  <input id="rss" placeholder="Add RSS feed URL">
+  <button onclick="addRSS()">Add Feed</button>
+  <div id="results"></div>
+</main>
 <script>
-const B = location.origin;
-function e(id){return document.getElementById(id);}
-document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
-
-async function search(){
-    let q = e('q').value;
-    let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-    let d = await r.json();
-    let o = e('results');
-    o.innerHTML = '';
-    d.forEach(p => {
-        if (!p.feedUrl) return;
-        let div = document.createElement('div');
-        div.className = 'card';
-        div.innerHTML = `<b>${p.collectionName}</b><br><span class='tiny'>${p.artistName}</span><br>
-                         <button onclick="previewFeed('${p.feedUrl}')">📻 Episodes</button>`;
-        o.appendChild(div);
-    });
+async function search() {
+  let q = document.getElementById('search').value;
+  let r = await fetch('/api/search?q=' + encodeURIComponent(q));
+  let j = await r.json();
+  show(j.map(p => ({title: p.collectionName, pid: p.feedUrl, rss: p.feedUrl})));
 }
-
-async function previewFeed(url){
-    e('results').innerHTML = '⏳ Fetching episodes...';
-    let r = await fetch('/api/episodes_from_rss', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({rss_url: url})
-    });
-    let d = await r.json();
-    showEpisodes(d, true);
+async function addRSS() {
+  let url = document.getElementById('rss').value;
+  let r = await fetch('/api/episodes_from_rss', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({rss_url: url})
+  });
+  let j = await r.json();
+  show(j.map(p => ({title: p.title, pid: url, rss: url, audio: p.audio_url})));
 }
-
-let favOffset = 0;
-async function showFavs(){ favOffset = 0; loadFavPage(true); }
-
-async function loadFavPage(reset){
-    let r = await fetch(`/api/favorites?offset=${favOffset}`);
-    let d = await r.json();
-    let o = e('results');
-    if (reset) o.innerHTML = '';
-    d.forEach(p => {
-        let div = document.createElement('div');
-        div.className = 'card';
-        div.innerHTML = `<b>${p.title}</b><br><span class='tiny'>${p.author}</span><br>
-                         <button onclick="loadEp('${p.podcast_id}')">📻 Episodes</button>`;
-        o.appendChild(div);
-    });
-    if (d.length === 5) {
-        let btn = document.createElement('button');
-        btn.innerText = '⏬ More';
-        btn.onclick = () => { favOffset += 5; loadFavPage(false); };
-        o.appendChild(btn);
-    }
+async function loadFavs() {
+  let r = await fetch('/api/favorites');
+  let j = await r.json();
+  let fav = document.getElementById('favList');
+  fav.innerHTML = '';
+  j.forEach(p => {
+    let div = document.createElement('div');
+    div.innerHTML = `<b>${p.title}</b>`;
+    div.onclick = () => loadEpisodes(p.podcast_id);
+    fav.appendChild(div);
+  });
 }
-
-let epOffset = 0, currentId = '';
-async function loadEp(id){
-    currentId = id; epOffset = 0;
-    e('results').innerHTML = '⏳ Loading...';
-    await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
-    let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=0`);
-    let d = await r.json();
-    showEpisodes(d, true);
+async function loadEpisodes(pid) {
+  await fetch('/api/mark_played/' + encodeURIComponent(pid), {method: 'POST'});
+  let r = await fetch('/api/podcast/' + encodeURIComponent(pid) + '/episodes');
+  let j = await r.json();
+  show(j.map(e => ({title: e.title, pid: pid, audio: e.audio_url})));
 }
-
-async function loadMore(){
-    epOffset += 9;
-    let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-    let d = await r.json();
-    showEpisodes(d, false);
+function show(list) {
+  let out = document.getElementById('results');
+  out.innerHTML = '';
+  list.forEach(item => {
+    let div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `<b>${item.title}</b>` + (item.audio ? `<audio controls src="${item.audio}"></audio>` : '');
+    out.appendChild(div);
+  });
 }
-
-function showEpisodes(data, reset){
-    let o = e('results');
-    if (reset) o.innerHTML = '';
-    data.forEach((ep, i) => {
-        let div = document.createElement('div');
-        div.className = 'card';
-        let image = ep.cover_url ? `<img src="${ep.cover_url}" style="width:100%;border-radius:12px;margin-bottom:5px">` : '';
-        const playerId = `player${i}`;
-        const speedId = `speed${i}`;
-        div.innerHTML = `
-            ${image}
-            <b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-            <p>${ep.description || ''}</p>
-            <audio id="${playerId}" controls preload="none" style="width:100%;margin-top:4px">
-                <source src="${ep.audio_url}" type="audio/mpeg">
-                Your browser does not support the audio tag.
-            </audio>
-            <label for="${speedId}" class="tiny">Speed:</label>
-            <select id="${speedId}">
-                <option value="0.75">0.75x</option>
-                <option value="1" selected>1x</option>
-                <option value="1.25">1.25x</option>
-                <option value="1.5">1.5x</option>
-                <option value="2">2x</option>
-            </select>
-        `;
-        setTimeout(() => {
-            const audio = document.getElementById(playerId);
-            const speed = document.getElementById(speedId);
-            if (audio && speed) {
-                speed.addEventListener('change', () => {
-                    audio.playbackRate = parseFloat(speed.value);
-                });
-            }
-        }, 0);
-        o.appendChild(div);
-    });
-    if (data.length === 9) {
-        let btn = document.createElement('button');
-        btn.innerText = '⏬ Load More';
-        btn.onclick = loadMore;
-        o.appendChild(btn);
-    }
-}
-</script></body></html>
+loadFavs();
+</script>
+</body></html>
 '''
+    return Response(html, mimetype='text/html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
