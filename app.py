@@ -2,6 +2,7 @@ import os
 import sqlite3
 import requests
 import feedparser
+import threading
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -94,6 +95,7 @@ def get_favorites():
         "https://www.spreaker.com/show/5085297/episodes/feed",
         "https://anchor.fm/s/46be7940/podcast/rss"
     ]
+
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
@@ -115,11 +117,20 @@ def get_favorites():
             continue
 
     conn.commit()
-    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
-              % ','.join('?' * len(default_feeds)),
-              (*default_feeds, limit, offset))
+    placeholders = ','.join('?' for _ in default_feeds)
+    c.execute(f'''
+        SELECT * FROM podcasts
+        WHERE podcast_id IN ({placeholders})
+        ORDER BY last_played DESC
+        LIMIT ? OFFSET ?
+    ''', (*default_feeds, limit, offset))
     rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
     conn.close()
+
+    # Prefetch episodes in background
+    for p in rows:
+        threading.Thread(target=lambda url=f"{request.host_url}api/podcast/{p['podcast_id']}/episodes": requests.get(url)).start()
+
     return jsonify(rows)
 
 @app.route('/api/mark_played/<path:pid>', methods=['POST'])
@@ -143,7 +154,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
-    # Else fetch from RSS
+    # If not in DB, fetch from feed
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -183,178 +194,7 @@ def get_episodes(pid):
 
 @app.route('/')
 def homepage():
-    return '''<!DOCTYPE html><html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Podcast</title>
-<style>
-  body {
-    font-family: sans-serif;
-    font-size: 14px;
-    margin: 4px;
-    background: #f5f5f5;
-  }
-  input, button {
-    width: 100%;
-    margin: 6px 0;
-    padding: 6px;
-    font-size: 14px;
-  }
-  .card {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    padding: 10px;
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    cursor: pointer;
-    transition: transform 0.1s ease-in-out;
-  }
-  .card:hover {
-    transform: scale(1.02);
-  }
-  .card img {
-    width: 60px;
-    height: 60px;
-    border-radius: 8px;
-    margin-right: 10px;
-    object-fit: cover;
-  }
-  .info {
-    flex: 1;
-  }
-  .title {
-    font-weight: bold;
-    font-size: 15px;
-  }
-  .tiny {
-    font-size: 11px;
-    color: #666;
-  }
-</style>
-</head><body>
-<h3>🎧 Podcast</h3>
-<input id="q" placeholder="Search...">
-<button onclick="search()">🔍 Search</button>
-<button onclick="showFavs()">⭐ My Favorites</button>
-<div id="results"></div>
+    return open("/app/static/index.html").read()
 
-<script>
-const B = location.origin;
-function e(id) { return document.getElementById(id); }
-document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
-
-async function search() {
-  let q = e('q').value;
-  let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-  let d = await r.json();
-  let o = e('results'); o.innerHTML = '';
-  d.forEach(p => {
-    if (!p.feedUrl) return;
-    let div = document.createElement('div');
-    div.className = 'card';
-    div.onclick = () => previewFeed(p.feedUrl);
-    div.innerHTML = `
-      <img src="${p.artworkUrl100 || ''}">
-      <div class="info">
-        <div class="title">${p.collectionName}</div>
-        <div class="tiny">${p.artistName}</div>
-      </div>`;
-    o.appendChild(div);
-  });
-}
-
-async function previewFeed(url) {
-  e('results').innerHTML = '⏳ Fetching episodes...';
-  let r = await fetch('/api/episodes_from_rss', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rss_url: url })
-  });
-  let d = await r.json();
-  showEpisodes(d);
-}
-
-let favOffset = 0;
-async function showFavs() {
-  favOffset = 0;
-  loadFavPage(true);
-}
-
-async function loadFavPage(reset) {
-  let r = await fetch(`/api/favorites?offset=${favOffset}`);
-  let d = await r.json();
-  let o = e('results'); if (reset) o.innerHTML = '';
-  d.forEach(p => {
-    let div = document.createElement('div');
-    div.className = 'card';
-    div.onclick = () => loadEp(p.podcast_id);
-    div.innerHTML = `
-      <img src="${p.cover_url || ''}">
-      <div class="info">
-        <div class="title">${p.title}</div>
-        <div class="tiny">${p.author}</div>
-      </div>`;
-    o.appendChild(div);
-  });
-  if (d.length === 5) {
-    let btn = document.createElement('button');
-    btn.innerText = '⏬ More';
-    btn.onclick = () => { favOffset += 5; loadFavPage(false); };
-    o.appendChild(btn);
-  }
-}
-
-let epOffset = 0, currentId = '';
-async function loadEp(id) {
-  currentId = id; epOffset = 0;
-  e('results').innerHTML = '⏳ Loading...';
-  await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
-  loadEpisodeAtOffset();
-}
-
-async function loadEpisodeAtOffset() {
-  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-  let d = await r.json();
-  showEpisodes(d);
-}
-
-function showEpisodes(data) {
-  let o = e('results'); o.innerHTML = '';
-  if (!data || data.length === 0) {
-    o.innerHTML = 'No episodes found.'; return;
-  }
-  let ep = data[0];
-  let div = document.createElement('div');
-  div.className = 'card';
-  div.innerHTML = `
-    <div class="info">
-      <div class="title">${ep.title}</div>
-      <div class="tiny">${ep.pub_date}</div>
-      <p>${ep.description || ''}</p>
-      <audio id="audioPlayer" controls autoplay style="width:100%">
-        <source src="${ep.audio_url}" type="audio/mpeg">
-      </audio>
-      <a href="${ep.audio_url}" target="_blank">⬇️ Download</a>
-    </div>`;
-  o.appendChild(div);
-
-  let nav = document.createElement('div');
-  nav.style = 'margin-top:10px;text-align:center';
-  if (epOffset > 0) {
-    let prev = document.createElement('button');
-    prev.innerText = '⬅️ Previous';
-    prev.onclick = () => { epOffset--; loadEpisodeAtOffset(); };
-    nav.appendChild(prev);
-  }
-  let next = document.createElement('button');
-  next.innerText = '➡️ Next';
-  next.style = 'margin-left:10px';
-  next.onclick = () => { epOffset++; loadEpisodeAtOffset(); };
-  nav.appendChild(next);
-  o.appendChild(nav);
-}
-</script></body></html>'''
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
