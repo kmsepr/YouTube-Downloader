@@ -134,7 +134,7 @@ def mark_played(pid):
 @app.route('/api/podcast/<path:pid>/episodes')
 def get_episodes(pid):
     offset = int(request.args.get('offset', 0))
-    limit = 9
+    limit = 1
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
@@ -143,6 +143,7 @@ def get_episodes(pid):
         conn.close()
         return jsonify(rows)
 
+    # Else fetch from RSS
     c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
     row = c.fetchone()
     if not row:
@@ -183,10 +184,13 @@ def get_episodes(pid):
 @app.route('/')
 def homepage():
     return '''
-<!DOCTYPE html><html><head><meta name="viewport" content="width=320"><title>Podcast</title><style>
-body{font-family:sans-serif;font-size:14px;margin:4px}
-input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px;border-radius:10px}
-.tiny{font-size:11px;color:#666}
+<!DOCTYPE html><html><head><meta name="viewport" content="width=320">
+<title>Podcast</title>
+<style>
+  body { font-family: sans-serif; font-size: 14px; margin: 4px }
+  input, button { width: 100%; margin: 4px 0 }
+  .card { border: 1px solid #ccc; padding: 5px; margin-top: 6px; border-radius: 10px }
+  .tiny { font-size: 11px; color: #666 }
 </style></head><body><h3>🎧 Podcast</h3>
 <p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
@@ -194,15 +198,14 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
 <div id="results"></div>
 <script>
 const B = location.origin;
-function e(id){return document.getElementById(id);}
+function e(id) { return document.getElementById(id); }
 document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
 
-async function search(){
+async function search() {
   let q = e('q').value;
   let r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
   let d = await r.json();
-  let o = e('results');
-  o.innerHTML = '';
+  let o = e('results'); o.innerHTML = '';
   d.forEach(p => {
     if (!p.feedUrl) return;
     let div = document.createElement('div');
@@ -213,25 +216,27 @@ async function search(){
   });
 }
 
-async function previewFeed(url){
+async function previewFeed(url) {
   e('results').innerHTML = '⏳ Fetching episodes...';
   let r = await fetch('/api/episodes_from_rss', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({rss_url: url})
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rss_url: url })
   });
   let d = await r.json();
-  showEpisodes(d, true);
+  showEpisodes(d);
 }
 
 let favOffset = 0;
-async function showFavs(){ favOffset = 0; loadFavPage(true); }
+async function showFavs() {
+  favOffset = 0;
+  loadFavPage(true);
+}
 
-async function loadFavPage(reset){
+async function loadFavPage(reset) {
   let r = await fetch(`/api/favorites?offset=${favOffset}`);
   let d = await r.json();
-  let o = e('results');
-  if (reset) o.innerHTML = '';
+  let o = e('results'); if (reset) o.innerHTML = '';
   d.forEach(p => {
     let div = document.createElement('div');
     div.className = 'card';
@@ -248,66 +253,50 @@ async function loadFavPage(reset){
 }
 
 let epOffset = 0, currentId = '';
-async function loadEp(id){
-  currentId = id;
-  epOffset = 0;
+async function loadEp(id) {
+  currentId = id; epOffset = 0;
   e('results').innerHTML = '⏳ Loading...';
   await fetch(`/api/mark_played/${encodeURIComponent(id)}`, { method: 'POST' });
-  let r = await fetch(`/api/podcast/${encodeURIComponent(id)}/episodes?offset=${epOffset}`);
-  let d = await r.json();
-  showEpisodes(d, true);
+  loadEpisodeAtOffset();
 }
 
-function showEpisodes(data, reset){
-  let o = e('results');
-  if (reset) o.innerHTML = '';
+async function loadEpisodeAtOffset() {
+  let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
+  let d = await r.json();
+  showEpisodes(d);
+}
 
-  if (data.length === 0) {
-    o.innerHTML = 'No episodes found.';
-    return;
+function showEpisodes(data) {
+  let o = e('results'); o.innerHTML = '';
+  if (!data || data.length === 0) {
+    o.innerHTML = 'No episodes found.'; return;
   }
-
-  // Show only the latest one
   let ep = data[0];
   let div = document.createElement('div');
   div.className = 'card';
-  div.innerHTML = `<b>${ep.title}</b><br><span class="tiny">${ep.pub_date}</span><br>
-  <p>${ep.description || ''}</p>
-  <audio controls style="width:100%"><source src="${ep.audio_url}" type="audio/mpeg"></audio>
-  <br><a href="${ep.audio_url}" target="_blank">⬇️ Download</a>`;
+  div.innerHTML = `<b>${ep.title}</b><br>
+    <span class="tiny">${ep.pub_date}</span><br>
+    <p>${ep.description || ''}</p>
+    <audio id="audioPlayer" controls autoplay style="width:100%">
+      <source src="${ep.audio_url}" type="audio/mpeg">
+    </audio><br>
+    <a href="${ep.audio_url}" target="_blank">⬇️ Download</a>`;
   o.appendChild(div);
 
-  // Navigation
-  let navDiv = document.createElement('div');
-  navDiv.style = 'margin-top:10px;text-align:center';
-
+  let nav = document.createElement('div');
+  nav.style = 'margin-top:10px;text-align:center';
   if (epOffset > 0) {
     let prev = document.createElement('button');
     prev.innerText = '⬅️ Previous';
-    prev.onclick = async () => {
-      epOffset -= 1;
-      if (epOffset < 0) epOffset = 0;
-      let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-      let d = await r.json();
-      showEpisodes(d, true);
-    };
-    navDiv.appendChild(prev);
+    prev.onclick = () => { epOffset--; loadEpisodeAtOffset(); };
+    nav.appendChild(prev);
   }
-
-  if (data.length === 1) {
-    let next = document.createElement('button');
-    next.innerText = '➡️ Next';
-    next.style = 'margin-left:10px';
-    next.onclick = async () => {
-      epOffset += 1;
-      let r = await fetch(`/api/podcast/${encodeURIComponent(currentId)}/episodes?offset=${epOffset}`);
-      let d = await r.json();
-      showEpisodes(d, true);
-    };
-    navDiv.appendChild(next);
-  }
-
-  o.appendChild(navDiv);
+  let next = document.createElement('button');
+  next.innerText = '➡️ Next';
+  next.style = 'margin-left:10px';
+  next.onclick = () => { epOffset++; loadEpisodeAtOffset(); };
+  nav.appendChild(next);
+  o.appendChild(nav);
 }
 </script></body></html>
 '''
