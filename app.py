@@ -1,8 +1,8 @@
-import os
+from flask import Flask, request, jsonify, render_template_string
 import sqlite3
-import requests
+import os
 import feedparser
-from flask import Flask, request, jsonify
+import requests
 
 app = Flask(__name__)
 DB_FILE = '/mnt/data/podcasts.db'
@@ -40,146 +40,6 @@ def init_db():
 
 init_db()
 
-@app.route('/api/search')
-def search_podcasts():
-    query = request.args.get('q', '')
-    try:
-        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
-        return jsonify(res.json().get('results', []))
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/episodes_from_rss', methods=['POST'])
-def episodes_from_rss():
-    data = request.get_json()
-    rss_url = data.get('rss_url')
-    if not rss_url:
-        return jsonify([])
-
-    feed = feedparser.parse(rss_url)
-    results = []
-    for item in feed.entries[:10]:
-        audio = ''
-        for enc in item.get('enclosures', []):
-            if enc.get('href', '').startswith('http'):
-                audio = enc['href']
-                break
-        if not audio:
-            continue
-        results.append({
-            'title': item.get('title', ''),
-            'description': item.get('summary', '') or item.get('description', ''),
-            'pub_date': item.get('published', ''),
-            'audio_url': audio
-        })
-    return jsonify(results)
-
-@app.route('/api/favorites')
-def get_favorites():
-    offset = int(request.args.get('offset', 0))
-    limit = 5
-    default_feeds = [
-        "https://anchor.fm/s/c1cd3f68/podcast/rss",
-        "https://anchor.fm/s/1c3ac138/podcast/rss",
-        "https://anchor.fm/s/28ef3620/podcast/rss",
-        "https://anchor.fm/s/f662ec14/podcast/rss",
-        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
-        "https://feeds.megaphone.fm/THGU4956605070",
-        "https://feeds.blubrry.com/feeds/2931440.xml",
-        "https://anchor.fm/s/39ae8bf0/podcast/rss",
-        "https://feeds.buzzsprout.com/2050847.rss",
-        "https://anchor.fm/s/601dfb4/podcast/rss",
-        "https://muslimcentral.com/audio/the-deen-show/feed/",
-        "https://feeds.buzzsprout.com/1194665.rss",
-        "https://www.spreaker.com/show/5085297/episodes/feed",
-        "https://anchor.fm/s/46be7940/podcast/rss"
-    ]
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-
-    for rss_url in default_feeds:
-        try:
-            feed = feedparser.parse(rss_url)
-            if not feed.entries:
-                continue
-            podcast_id = rss_url
-            title = feed.feed.get('title', 'Untitled')
-            author = feed.feed.get('author', 'Unknown')
-            image = (feed.feed.get('image', {}) or {}).get('href', '') or \
-                    feed.feed.get('itunes_image', {}).get('href', '')
-            c.execute('''
-                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (podcast_id, title, author, image, rss_url))
-        except:
-            continue
-
-    conn.commit()
-    c.execute('SELECT * FROM podcasts WHERE podcast_id IN (%s) ORDER BY last_played DESC LIMIT ? OFFSET ?'
-              % ','.join('?' * len(default_feeds)),
-              (*default_feeds, limit, offset))
-    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
-    conn.close()
-    return jsonify(rows)
-
-@app.route('/api/mark_played/<path:pid>', methods=['POST'])
-def mark_played(pid):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('UPDATE podcasts SET last_played = CURRENT_TIMESTAMP WHERE podcast_id = ?', (pid,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Marked as played'})
-
-@app.route('/api/podcast/<path:pid>/episodes')
-def get_episodes(pid):
-    offset = int(request.args.get('offset', 0))
-    limit = 9
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
-    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
-    if rows:
-        conn.close()
-        return jsonify(rows)
-
-    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({'error': 'Podcast not found'}), 404
-
-    feed = feedparser.parse(row[0])
-    all_eps = []
-    for item in feed.entries:
-        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
-        audio = ''
-        for enc in item.get('enclosures', []):
-            if enc.get('href', '').startswith('http'):
-                audio = enc['href']
-                break
-        if not audio:
-            continue
-        title = item.get('title', '')
-        desc = item.get('summary', '') or item.get('description', '')
-        pub_date = item.get('published', '')
-        duration = item.get('itunes_duration', '')
-        c.execute('''
-            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (pid, eid, title, desc, audio, pub_date, duration))
-        all_eps.append({
-            'episode_id': eid,
-            'title': title,
-            'description': desc,
-            'audio_url': audio,
-            'pub_date': pub_date,
-            'duration': duration
-        })
-    conn.commit()
-    conn.close()
-    return jsonify(all_eps[offset:offset + limit])
-
 @app.route('/')
 def homepage():
     return '''
@@ -187,8 +47,16 @@ def homepage():
 body{font-family:sans-serif;font-size:14px;margin:4px}
 input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;margin-top:6px}
 .tiny{font-size:11px;color:#666} audio{width:100%; margin-top:5px}
+.help{background:#f2f2f2;padding:5px;font-size:12px;color:#444;margin-bottom:6px}
 </style></head><body><h3>🎧 Podcast</h3>
-<p style="font-size:12px;color:#666">🔢 Press 1 to view Favorites</p>
+<div class="help">
+📱 Keypad Help:<br>
+1 = Favorites<br>
+2 = Previous Episode<br>
+4 = ⏪ Seek 15s / long press 60s<br>
+6 = ⏩ Seek 30s / long press 60s<br>
+8 = Next Episode
+</div>
 <input id="q" placeholder="Search..."><button onclick="search()">🔍 Search</button>
 <button onclick="showFavs()">⭐ My Favorites</button>
 <div id="results"></div>
@@ -199,14 +67,35 @@ input,button{width:100%;margin:4px 0}.card{border:1px solid #ccc;padding:5px;mar
     <p id="epDesc" style="margin-top:6px"></p>
     <a id="downloadBtn" href="#" download style="display:inline-block;margin:5px 0">📥 Download MP3</a><br>
     <button onclick="prevEp()">⏮️</button>
+    <button onclick="seek(-15)">⏪ 15s</button>
     <button onclick="togglePlay()">⏯️</button>
+    <button onclick="seek(30)">⏩ 30s</button>
     <button onclick="nextEp()">⏭️</button>
   </div>
 </div>
 <script>
 const B = location.origin;
 function e(id){return document.getElementById(id);}
-document.addEventListener('keydown', ev => { if (ev.key === '1') showFavs(); });
+
+let keyDownTime = {};
+document.addEventListener('keydown', ev => {
+  const k = ev.key;
+  keyDownTime[k] = Date.now();
+});
+
+document.addEventListener('keyup', ev => {
+  const k = ev.key;
+  const heldTime = Date.now() - (keyDownTime[k] || 0);
+
+  if (k === '1') showFavs();
+  else if (k === '2') prevEp();
+  else if (k === '8') nextEp();
+  else if (k === '4') seek(heldTime > 600 ? -60 : -15);
+  else if (k === '6') seek(heldTime > 600 ? 60 : 30);
+else if (k === '5') togglePlay();
+
+  delete keyDownTime[k];
+});
 
 async function search(){
   let q = e('q').value;
@@ -305,8 +194,159 @@ function togglePlay(){
   let p = e('player');
   if (p.paused) p.play(); else p.pause();
 }
+
+function seek(seconds) {
+  let p = e('player');
+  p.currentTime = Math.max(0, p.currentTime + seconds);
+}
 </script></body></html>
 '''
+
+@app.route('/api/episodes_from_rss', methods=['POST'])
+def episodes_from_rss():
+    data = request.get_json()
+    rss_url = data.get('rss_url')
+    if not rss_url:
+        return jsonify([])
+
+    feed = feedparser.parse(rss_url)
+    results = []
+    for item in feed.entries[:10]:
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc.get('href', '').startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        results.append({
+            'title': item.get('title', ''),
+            'description': item.get('summary', '') or item.get('description', ''),
+            'pub_date': item.get('published', ''),
+            'audio_url': audio
+        })
+    return jsonify(results)
+
+@app.route('/api/favorites')
+def get_favorites():
+    offset = int(request.args.get('offset', 0))
+    limit = 5
+    default_feeds = [
+        "https://muslimcentral.com/audio/hamza-yusuf/feed/",
+        "https://feeds.megaphone.fm/THGU4956605070",
+        "https://feeds.buzzsprout.com/2050847.rss",
+        "https://muslimcentral.com/audio/the-deen-show/feed/",
+        "https://feeds.buzzsprout.com/1194665.rss",
+        "https://www.spreaker.com/show/5085297/episodes/feed"
+    ]
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    for rss_url in default_feeds:
+        try:
+            feed = feedparser.parse(rss_url)
+            if not feed.entries:
+                continue
+            podcast_id = rss_url
+            title = feed.feed.get('title', 'Untitled')
+            author = feed.feed.get('author', 'Unknown')
+            image = (feed.feed.get('image', {}) or {}).get('href', '') or \
+                    feed.feed.get('itunes_image', {}).get('href', '')
+            c.execute('''
+                INSERT OR IGNORE INTO podcasts (podcast_id, title, author, cover_url, rss_url)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (podcast_id, title, author, image, rss_url))
+        except:
+            continue
+
+    conn.commit()
+
+    placeholders = ','.join('?' for _ in default_feeds)
+    c.execute(f'''
+        SELECT * FROM podcasts
+        WHERE podcast_id IN ({placeholders})
+        ORDER BY last_played DESC
+        LIMIT ? OFFSET ?
+    ''', (*default_feeds, limit, offset))
+
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+    conn.close()
+    return jsonify(rows)
+
+@app.route('/api/mark_played/<path:pid>', methods=['POST'])
+def mark_played(pid):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('UPDATE podcasts SET last_played = CURRENT_TIMESTAMP WHERE podcast_id = ?', (pid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Marked as played'})
+
+
+
+@app.route('/api/search')
+def search_podcasts():
+    query = request.args.get('q', '')
+    try:
+        res = requests.get(f'https://itunes.apple.com/search?media=podcast&term={query}')
+        return jsonify(res.json().get('results', []))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/podcast/<path:pid>/episodes')
+def get_episodes(pid):
+    offset = int(request.args.get('offset', 0))
+    limit = 9
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT * FROM episodes WHERE podcast_id = ? ORDER BY pub_date DESC LIMIT ? OFFSET ?', (pid, limit, offset))
+    rows = [dict(zip([col[0] for col in c.description], row)) for row in c.fetchall()]
+
+    if rows:
+        conn.close()
+        return jsonify(rows)
+
+    # If no cached episodes, fetch from RSS
+    c.execute('SELECT rss_url FROM podcasts WHERE podcast_id = ?', (pid,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'Podcast not found'}), 404
+
+    feed = feedparser.parse(row[0])
+    all_eps = []
+    for item in feed.entries:
+        eid = item.get('id') or item.get('guid') or item.get('link') or item.get('title')
+        audio = ''
+        for enc in item.get('enclosures', []):
+            if enc.get('href', '').startswith('http'):
+                audio = enc['href']
+                break
+        if not audio:
+            continue
+        title = item.get('title', '')
+        desc = item.get('summary', '') or item.get('description', '')
+        pub_date = item.get('published', '')
+        duration = item.get('itunes_duration', '')
+
+        c.execute('''
+            INSERT OR IGNORE INTO episodes (podcast_id, episode_id, title, description, audio_url, pub_date, duration)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (pid, eid, title, desc, audio, pub_date, duration))
+
+        all_eps.append({
+            'episode_id': eid,
+            'title': title,
+            'description': desc,
+            'audio_url': audio,
+            'pub_date': pub_date,
+            'duration': duration
+        })
+
+    conn.commit()
+    conn.close()
+    return jsonify(all_eps[offset:offset + limit])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=3000)
